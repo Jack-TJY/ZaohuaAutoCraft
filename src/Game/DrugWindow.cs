@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 using ZaohuaAutoCraft.Solver;
 
 namespace ZaohuaAutoCraft
@@ -39,7 +41,7 @@ namespace ZaohuaAutoCraft
 
         Font font;
 
-        EventSystem blockedEventSystem;
+        internal static bool MouseOver;
 
         public void Update()
         {
@@ -50,6 +52,7 @@ namespace ZaohuaAutoCraft
                 {
                     Hide();
                 }
+                MouseOver = false;
                 return;
             }
             if (Plugin.ToggleKey.Value.IsDown())
@@ -71,27 +74,10 @@ namespace ZaohuaAutoCraft
             {
                 Verify();
             }
-            // 鼠标在窗口上时暂停游戏 UI 的点击，避免点穿到下面的背包格子
+            // 鼠标在窗口上时让游戏 UI 的射线检测落空，避免点穿到下面的背包格子（见 GraphicRaycasterPatch）。
+            // 不能直接关 EventSystem：游戏每帧都在用 EventSystem.current，关掉会刷空引用报错。
             var mouse = Input.mousePosition;
-            bool over = visible && rect.Contains(new Vector2(mouse.x, Screen.height - mouse.y));
-            if (over && blockedEventSystem == null && EventSystem.current != null)
-            {
-                blockedEventSystem = EventSystem.current;
-                blockedEventSystem.enabled = false;
-            }
-            else if (!over)
-            {
-                Unblock();
-            }
-        }
-
-        void Unblock()
-        {
-            if (blockedEventSystem != null)
-            {
-                blockedEventSystem.enabled = true;
-                blockedEventSystem = null;
-            }
+            MouseOver = visible && rect.Contains(new Vector2(mouse.x, Screen.height - mouse.y));
         }
 
         void Show()
@@ -112,7 +98,7 @@ namespace ZaohuaAutoCraft
         void Hide()
         {
             visible = false;
-            Unblock();
+            MouseOver = false;
         }
 
         void RefreshFurnace()
@@ -317,6 +303,15 @@ namespace ZaohuaAutoCraft
                 status = "核对失败：" + e.Message;
                 Plugin.Log.LogError(e);
             }
+        }
+    }
+
+    [HarmonyPatch(typeof(GraphicRaycaster), nameof(GraphicRaycaster.Raycast), new[] { typeof(PointerEventData), typeof(List<RaycastResult>) })]
+    internal static class GraphicRaycasterPatch
+    {
+        private static bool Prefix()
+        {
+            return !DrugWindow.MouseOver;
         }
     }
 }
