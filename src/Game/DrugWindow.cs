@@ -77,7 +77,8 @@ namespace ZaohuaAutoCraft
             // 鼠标在窗口上时让游戏 UI 的射线检测落空，避免点穿到下面的背包格子（见 GraphicRaycasterPatch）。
             // 不能直接关 EventSystem：游戏每帧都在用 EventSystem.current，关掉会刷空引用报错。
             var mouse = Input.mousePosition;
-            MouseOver = visible && rect.Contains(new Vector2(mouse.x, Screen.height - mouse.y));
+            var gui = new Vector2(mouse.x, Screen.height - mouse.y);
+            MouseOver = pressing || ButtonRect().Contains(gui) || (visible && rect.Contains(gui));
         }
 
         void Show()
@@ -128,7 +129,66 @@ namespace ZaohuaAutoCraft
             GUI.skin.font = font;
             try
             {
-                if (GUI.Button(new Rect(Screen.width - 190, 12, 170, 30), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})"))
+                DrawToggleButton();
+                if (visible)
+                {
+                    rect = GUI.Window(WindowId, rect, DrawWindow, "自动炼丹");
+                }
+            }
+            finally
+            {
+                GUI.skin.font = oldFont;
+            }
+        }
+
+        bool pressing, dragged;
+
+        Vector2 pressMouse, pressPos, dragPos;
+
+        /// <summary>按钮当前位置。配置里是负数时用默认位置：右上角往下一点，避开游戏自己的按钮。</summary>
+        Rect ButtonRect()
+        {
+            float x = dragged ? dragPos.x : Plugin.ButtonX.Value < 0 ? Screen.width - 190 : Plugin.ButtonX.Value;
+            float y = dragged ? dragPos.y : Plugin.ButtonY.Value < 0 ? 90 : Plugin.ButtonY.Value;
+            return new Rect(Mathf.Clamp(x, 0, Screen.width - 170), Mathf.Clamp(y, 0, Screen.height - 30), 170, 30);
+        }
+
+        /// <summary>单击开关窗口，按住拖动可以挪位置，松手后记到配置里。</summary>
+        void DrawToggleButton()
+        {
+            var r = ButtonRect();
+            var e = Event.current;
+            if (e.type == EventType.MouseDown && e.button == 0 && r.Contains(e.mousePosition))
+            {
+                pressing = true;
+                dragged = false;
+                pressMouse = e.mousePosition;
+                pressPos = r.position;
+                e.Use();
+            }
+            else if (pressing && e.type == EventType.MouseDrag)
+            {
+                if ((e.mousePosition - pressMouse).sqrMagnitude > 16)
+                {
+                    dragged = true;
+                }
+                if (dragged)
+                {
+                    dragPos = pressPos + e.mousePosition - pressMouse;
+                }
+                e.Use();
+            }
+            else if (pressing && e.type == EventType.MouseUp)
+            {
+                pressing = false;
+                if (dragged)
+                {
+                    var p = ButtonRect().position;
+                    dragged = false;
+                    Plugin.ButtonX.Value = Mathf.RoundToInt(p.x);
+                    Plugin.ButtonY.Value = Mathf.RoundToInt(p.y);
+                }
+                else
                 {
                     if (visible)
                     {
@@ -139,15 +199,9 @@ namespace ZaohuaAutoCraft
                         Show();
                     }
                 }
-                if (visible)
-                {
-                    rect = GUI.Window(WindowId, rect, DrawWindow, "自动炼丹");
-                }
+                e.Use();
             }
-            finally
-            {
-                GUI.skin.font = oldFont;
-            }
+            GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})");
         }
 
         void DrawWindow(int id)
