@@ -142,7 +142,7 @@ namespace ZaohuaAutoCraft
             GUI.skin.font = font;
             try
             {
-                if (GUI.Button(new Rect(Screen.width - 190, 12, 170, 30), visible ? "关闭自动摆放 (F8)" : "自动摆放 (F8)"))
+                if (GUI.Button(new Rect(Screen.width - 190, 12, 170, 30), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})"))
                 {
                     if (visible)
                     {

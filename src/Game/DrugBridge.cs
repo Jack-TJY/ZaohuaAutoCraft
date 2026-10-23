@@ -13,7 +13,25 @@ namespace ZaohuaAutoCraft.Game
         /// <summary>CraftingDrugCell.Awake 时记下，界面关掉后 gameObject 不活跃。</summary>
         public static CraftingDrugCell Cell;
 
-        public static bool IsOpen => Cell != null && Cell.gameObject.activeInHierarchy && BsSaveDataImpl.nowActor != null;
+        static float nextFind;
+
+        public static bool IsOpen
+        {
+            get
+            {
+                // Awake 补丁万一没抓到（比如对象池早于插件加载），就定时在场景里找一次
+                if (Cell == null && UnityEngine.Time.unscaledTime >= nextFind)
+                {
+                    nextFind = UnityEngine.Time.unscaledTime + 0.5f;
+                    Cell = UnityEngine.Object.FindObjectOfType<CraftingDrugCell>();
+                    if (Cell != null)
+                    {
+                        Plugin.Log.LogInfo("找到炼丹界面（场景查找）");
+                    }
+                }
+                return Cell != null && Cell.gameObject.activeInHierarchy && BsSaveDataImpl.nowActor != null;
+            }
+        }
 
         public class RecipeInfo
         {
@@ -181,6 +199,7 @@ namespace ZaohuaAutoCraft.Game
         private static void Postfix(CraftingDrugCell __instance)
         {
             DrugBridge.Cell = __instance;
+            Plugin.Log.LogInfo("找到炼丹界面");
         }
     }
 }
