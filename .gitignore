@@ -1,0 +1,6 @@
+# 游戏与 BepInEx 的 dll 不随仓库分发
+lib/
+# 解包出来的原版数据
+unpacked/
+bin/
+obj/
