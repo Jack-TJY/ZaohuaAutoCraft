@@ -368,4 +368,26 @@ namespace ZaohuaAutoCraft
             return !DrugWindow.MouseOver;
         }
     }
+
+    /// <summary>
+    /// 射线被挡掉后游戏会以为鼠标不在 UI 上，地图、棋子等会把点击当成点地图。
+    /// 鼠标在窗口或按钮上时告诉游戏「在 UI 上」。
+    /// </summary>
+    [HarmonyPatch(typeof(EventSystem), nameof(EventSystem.IsPointerOverGameObject), new Type[0])]
+    internal static class PointerOverPatch
+    {
+        private static void Postfix(ref bool __result)
+        {
+            __result |= DrugWindow.MouseOver;
+        }
+    }
+
+    [HarmonyPatch(typeof(EventSystem), nameof(EventSystem.IsPointerOverGameObject), new[] { typeof(int) })]
+    internal static class PointerOverIdPatch
+    {
+        private static void Postfix(ref bool __result)
+        {
+            __result |= DrugWindow.MouseOver;
+        }
+    }
 }
