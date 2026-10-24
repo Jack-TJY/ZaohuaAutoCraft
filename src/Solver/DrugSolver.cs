@@ -6,12 +6,13 @@ using System.Linq;
 namespace ZaohuaAutoCraft.Solver
 {
     /// <summary>
-    /// 炼丹：选材（阳加阴减后正好等于 Need）+ 装箱。
-    /// 选材按件数从少到多逐层加深，同一层内枚举所有组合，再按品阶、价格排序后依次尝试装箱。
+    /// 炼丹：选材（阳加阴减后正好等于 Need）+ 装箱 + 摆位优化。
+    /// 选材按件数从少到多逐层找组合：少件数用折半查表（一次查出所有 ≤2h 件的组合），更多件用带剪枝的 DFS。
+    /// 不同模式只是「找哪些层、怎么排序、要不要调摆位」不同。
     /// </summary>
     public class DrugSolver
     {
-        // 属性完全相同（同一侧）的材料归成一类，搜索时只看类，装箱时再挑具体材料
+        // 同一侧、属性完全相同、形状相同、品阶相同的材料归成一类，搜索时只看类，装箱时再挑具体材料
         class Unit
         {
             public List<int> Mats = new List<int>();
@@ -20,112 +21,163 @@ namespace ZaohuaAutoCraft.Solver
 
             public int[] Contrib;
 
-            /// <summary>类内最小占格，用于容量的乐观估计。</summary>
             public int Size;
 
-            public int Stock;
+            public int Type;
+
+            public int Grade;
 
             public bool Pure;
+
+            /// <summary>补料模式：类内最便宜的可买单价；不可买为 -1。</summary>
+            public long BuyPrice = -1;
+
+            public int Affinity;
         }
 
         readonly DrugRequest req;
 
-        List<Unit> units = new List<Unit>();
-
-        List<Unit> allUnits = new List<Unit>();
+        readonly List<Unit> allUnits = new List<Unit>();
 
         readonly Stopwatch clock = new Stopwatch();
 
-        // 每个属性维度上，能把余量往正 / 负方向推的单元
-        List<int>[] posUnits, negUnits;
+        readonly List<List<Cell>> typeShapes = new List<List<Cell>>();
 
-        int[] maxPos, maxNeg;
+        readonly Dictionary<string, int> typeIds = new Dictionary<string, int>();
+
+        DrugStateEvaluator eval;
 
         bool timedOut;
 
-        long passLimitMs;
+        long deadline;
 
-        double maxEff;
+        public int MaxCombosPerDepth = 300;
 
-        int minSize;
-
-        // 单维下界表：只看第 d 维，凑出余量 v 至少要几件（忽略库存与其它维）。-1 表示凑不出
-        int[][] dist1d;
-
-        int[] band;
-
-        public int MaxCombosPerDepth = 200;
+        public static Action<string> Debug;
 
         public DrugSolver(DrugRequest req)
         {
             this.req = req;
         }
 
+        int capYang => req.Yang?.Area ?? 0;
+
+        int capYin => req.Yin?.Area ?? 0;
+
+        // ───────────────────────── 入口 ─────────────────────────
+
         public SolveResult Solve()
         {
             clock.Restart();
+            deadline = req.TimeLimitMs;
             var result = new SolveResult();
+            eval = req.States != null && req.States.Count > 0 ? new DrugStateEvaluator(req.States, req.Yang, req.Yin) : null;
             BuildUnits();
-            int capYang = req.Yang?.Area ?? 0, capYin = req.Yin?.Area ?? 0;
             if (req.Need.All(v => v == 0))
             {
+                var empty = new Solution();
+                Finalize(empty);
+                result.Solutions.Add(empty);
                 result.Message = "丹炉加成已经满足丹方，无需材料";
-                result.Best = new Solution();
                 return Finish(result);
             }
-            int combos = 0;
-            // 第一轮只用属性都在丹方范围内的材料（快）；凑不出再放开全部材料（可借无关属性互相抵消）
-            var passes = new List<(List<Unit> set, int limitMs)>
+            var mode = req.Mode;
+            if (eval == null && (mode == DrugMode.MaxCount || mode == DrugMode.MaxQuality))
             {
-                (allUnits.Where(u => u.Pure).ToList(), req.TimeLimitMs * 6 / 10),
-                (allUnits, req.TimeLimitMs)
-            };
-            foreach (var pass in passes)
+                mode = DrugMode.MinPieces;
+            }
+            List<Solution> sols;
+            if (req.TopUp)
             {
-                if (pass.set.Count == 0 || (pass.set.Count == units.Count && units.Count > 0))
+                sols = SolveTopUp();
+            }
+            else
+            {
+                switch (mode)
                 {
-                    continue;
-                }
-                SetUnits(pass.set);
-                passLimitMs = pass.limitMs;
-                timedOut = false;
-                int maxK = Math.Min(req.MaxPieces, (capYang + capYin) / Math.Max(1, minSize));
-                for (int k = 1; k <= maxK && !timedOut; k++)
-                {
-                    var found = new List<int[]>();
-                    var usage = new int[units.Count];
-                    var seen = new HashSet<string>();
-                    Dfs(req.Need.ToArray(), k, usage, 0, 0, capYang, capYin, found, seen);
-                    combos += found.Count;
-                    foreach (var combo in found.Select(Score).OrderBy(s => s.maxGrade).ThenBy(s => s.gradeSum).ThenBy(s => s.price))
-                    {
-                        var sol = TryPack(combo.usage);
-                        if (sol != null)
-                        {
-                            result.Best = sol;
-                            result.CombosTried = combos;
-                            return Finish(result);
-                        }
-                        result.FoundComboButNoFit = true;
-                        if (clock.ElapsedMilliseconds > req.TimeLimitMs)
-                        {
-                            timedOut = true;
-                            break;
-                        }
-                    }
+                    case DrugMode.LowGrade:
+                        sols = SolveLowGrade();
+                        break;
+                    case DrugMode.MaxCount:
+                    case DrugMode.MaxQuality:
+                        sols = SolvePlacementModes(mode);
+                        break;
+                    case DrugMode.MaxBatches:
+                        sols = SolveMaxBatches();
+                        break;
+                    default:
+                        sols = SolveMinPieces(Passes(allUnits), 1, deadline);
+                        break;
                 }
             }
-            result.CombosTried = combos;
+            // 剩余时间给每个方案调摆位（模式 3/4 已经调过）
+            if (eval != null && mode != DrugMode.MaxCount && mode != DrugMode.MaxQuality)
+            {
+                long budget = Math.Max(30, (req.TimeLimitMs + 400 - clock.ElapsedMilliseconds) / Math.Max(1, sols.Count));
+                foreach (var s in sols)
+                {
+                    Optimize(s, Math.Min(clock.ElapsedMilliseconds + budget, req.TimeLimitMs + 400), DrugMode.MaxQuality);
+                }
+            }
+            foreach (var s in sols)
+            {
+                Finalize(s);
+            }
+            result.Solutions = sols;
             result.TimedOut = timedOut;
-            result.Message = result.FoundComboButNoFit ? "属性能凑出，但形状放不进当前丹炉" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出该丹方");
+            if (sols.Count == 0)
+            {
+                result.Message = result.FoundComboButNoFit || anyNoFit ? "属性能凑出，但形状放不进当前丹炉" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出该丹方");
+                result.FoundComboButNoFit = anyNoFit;
+            }
+            result.CombosTried = combosTried;
             return Finish(result);
         }
 
         SolveResult Finish(SolveResult r)
         {
             r.ElapsedMs = clock.ElapsedMilliseconds;
-            r.TimedOut |= timedOut;
             return r;
+        }
+
+        void Finalize(Solution s)
+        {
+            s.MaxGrade = s.Placements.Count == 0 ? 0 : s.Placements.Max(p => p.Material.Grade);
+            s.GradeSum = s.Placements.Sum(p => p.Material.Grade);
+            s.Price = s.Placements.Sum(p => (long)p.Material.Price);
+            if (eval != null)
+            {
+                (s.Count, s.Quality) = eval.Evaluate(eval.BuildBoard(s.Placements), req.BaseCount, req.BaseQuality);
+            }
+            else
+            {
+                s.Count = Math.Max(0, req.BaseCount);
+                s.Quality = Math.Max(0, Math.Min(3, req.BaseQuality));
+            }
+            if (!req.TopUp)
+            {
+                // 这套摆法按库存能连续炼几次
+                long b = long.MaxValue;
+                foreach (var g in s.Placements.GroupBy(p => p.Material))
+                {
+                    b = Math.Min(b, g.Key.Stock / g.Count());
+                }
+                s.Batches = s.Placements.Count == 0 ? 0 : (int)Math.Min(int.MaxValue, b);
+            }
+        }
+
+        // ───────────────────────── 建模 ─────────────────────────
+
+        int TypeOf(List<Cell> shape)
+        {
+            string key = Packer.GetType(shape).Key;
+            if (!typeIds.TryGetValue(key, out int id))
+            {
+                id = typeShapes.Count;
+                typeIds[key] = id;
+                typeShapes.Add(shape);
+            }
+            return id;
         }
 
         void BuildUnits()
@@ -136,12 +188,13 @@ namespace ZaohuaAutoCraft.Solver
             for (int i = 0; i < mats.Count; i++)
             {
                 var m = mats[i];
-                long cap = m.Stock / Math.Max(1, req.Batch);
-                if (cap <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                bool usable = m.Stock > 0 || (req.TopUp && m.Buyable);
+                if (!usable || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
                 {
                     continue;
                 }
                 bool pure = Enumerable.Range(0, Attr.Count).All(d => m.Attrs[d] == 0 || needDims.Contains(d));
+                int type = TypeOf(m.Shape);
                 foreach (Side side in new[] { Side.Yang, Side.Yin })
                 {
                     var grid = side == Side.Yang ? req.Yang : req.Yin;
@@ -150,56 +203,432 @@ namespace ZaohuaAutoCraft.Solver
                         continue;
                     }
                     var contrib = side == Side.Yang ? m.Attrs.ToArray() : m.Attrs.Select(v => -v).ToArray();
-                    string key = (int)side + ":" + string.Join(",", contrib);
+                    string key = (int)side + ":" + string.Join(",", contrib) + ":" + type + ":" + m.Grade;
                     if (!byKey.TryGetValue(key, out var unit))
                     {
-                        unit = new Unit { Side = side, Contrib = contrib, Size = int.MaxValue, Pure = pure };
+                        unit = new Unit { Side = side, Contrib = contrib, Size = m.Shape.Count, Type = type, Grade = m.Grade, Pure = pure };
                         byKey[key] = unit;
                         allUnits.Add(unit);
                     }
                     unit.Mats.Add(i);
-                    unit.Size = Math.Min(unit.Size, m.Shape.Count);
-                    unit.Stock = (int)Math.Min(int.MaxValue, unit.Stock + cap);
+                    if (req.TopUp && m.Buyable && (unit.BuyPrice < 0 || m.Price < unit.BuyPrice))
+                    {
+                        unit.BuyPrice = m.Price;
+                    }
                 }
             }
-            // 类内材料按偏好排序：低阶、便宜、小块在前
             foreach (var u in allUnits)
             {
-                u.Mats = u.Mats.OrderBy(i => mats[i].Grade).ThenBy(i => mats[i].Price).ThenBy(i => mats[i].Shape.Count).ToList();
+                // 类内：便宜的先用；补料时先用已有的
+                u.Mats = u.Mats.OrderByDescending(i => req.TopUp && mats[i].Stock > 0).ThenBy(i => mats[i].Price).ToList();
+                if (eval != null)
+                {
+                    u.Affinity = eval.Affinity(mats[u.Mats[0]], req.Mode == DrugMode.MaxQuality);
+                }
             }
         }
 
-        void SetUnits(List<Unit> set)
+        long Cap(Unit u, int batch)
         {
-            units = set;
-            maxEff = 0;
-            minSize = set.Count == 0 ? 1 : set.Min(u => u.Size);
-            posUnits = new List<int>[Attr.Count];
-            negUnits = new List<int>[Attr.Count];
-            maxPos = new int[Attr.Count];
-            maxNeg = new int[Attr.Count];
+            long c = 0;
+            foreach (int i in u.Mats)
+            {
+                c += req.Materials[i].Stock / batch;
+            }
+            if (req.TopUp && u.BuyPrice >= 0)
+            {
+                c = int.MaxValue;
+            }
+            return c;
+        }
+
+        /// <summary>两轮：先只用属性都在丹方范围内的材料（快），再放开全部材料（可借无关属性互相抵消）。</summary>
+        List<List<Unit>> Passes(IEnumerable<Unit> source)
+        {
+            var all = source.ToList();
+            var pure = all.Where(u => u.Pure).ToList();
+            // 更窄的第一轮：数值不超过丹方最大要求两倍的材料，类数少到可以用 3+3 折半，6 维丹方靠它
+            int maxNeed = req.Need.Max(v => Math.Abs(v));
+            var near = pure.Where(u => u.Contrib.All(v => Math.Abs(v) <= 2 * maxNeed)).ToList();
+            var list = new List<List<Unit>>();
+            if (near.Count > 0 && near.Count < pure.Count)
+            {
+                list.Add(near);
+            }
+            if (pure.Count > 0)
+            {
+                list.Add(pure);
+            }
+            if (all.Count > pure.Count)
+            {
+                list.Add(all);
+            }
+            return list;
+        }
+
+        // ───────────────────────── 组合搜索 ─────────────────────────
+
+        /// <summary>一次搜索的上下文：一组材料类 + 批数，内含折半表和剪枝表。</summary>
+        class Space
+        {
+            public List<Unit> Units;
+
+            public int Batch;
+
+            public long[] Caps;
+
+            /// <summary>同一批材料在另一侧的类（阴阳共用库存），没有为 -1。</summary>
+            public int[] Twin;
+
+            public bool Over(int[] cnt, int u)
+            {
+                int t = Twin[u];
+                return cnt[u] + (t >= 0 ? cnt[t] : 0) > Caps[u];
+            }
+
+            // 折半表：所有 ≤ H 件的多重集合，按属性和 + 件数哈希
+            public int H;
+
+            public int EntryCount;
+
+            public int[] EntrySum;      // EntryCount × 8
+
+            public int[] EntryUnits;    // EntryCount × H，不足补 -1
+
+            public int[] EntrySize;
+
+            public int[] EntryAreaYang, EntryAreaYin;
+
+            public Dictionary<long, int> Head = new Dictionary<long, int>();
+
+            public int[] Next;
+
+            public List<int>[] BySize;
+
+            // DFS 用
+            public List<int>[] PosUnits, NegUnits;
+
+            public int[] MaxPos, MaxNeg;
+
+            public double MaxEff;
+
+            public int MinSize;
+
+            // [side][d]：每格最多能把第 d 维往正/负推多少（小丹炉时这个界很紧）
+            public double[][] PosPerCell, NegPerCell;
+
+            public int[][] Dist1d;
+
+            public int[] Band;
+
+            // 小丹炉几何先行：能放进去的形状多重集合（向下封闭），用 Zobrist 哈希表示
+            public HashSet<long>[] Packable = new HashSet<long>[3];
+
+            public long[,,] Zobrist;
+        }
+
+        int combosTried;
+
+        bool anyNoFit;
+
+        Space BuildSpace(List<Unit> units, int batch)
+        {
+            var sp = new Space { Units = units, Batch = batch, Caps = units.Select(u => Cap(u, batch)).ToArray() };
+            int n = units.Count;
+            sp.Twin = Enumerable.Repeat(-1, n).ToArray();
+            for (int a = 0; a < n; a++)
+            {
+                for (int b = 0; b < n; b++)
+                {
+                    if (units[a].Side != units[b].Side && units[a].Mats.Intersect(units[b].Mats).Any())
+                    {
+                        sp.Twin[a] = b;
+                        sp.Caps[a] = Math.Max(sp.Caps[a], sp.Caps[b]);
+                        break;
+                    }
+                }
+            }
+            sp.MinSize = n == 0 ? 1 : units.Min(u => u.Size);
+            BuildDfsTables(sp);
+            BuildGeometry(sp);
+            BuildHalfTable(sp);
+            Debug?.Invoke($"space n={n} batch={batch} H={sp.H} entries={sp.EntryCount} geo={(sp.Packable[1]?.Count.ToString() ?? "-")}/{(sp.Packable[2]?.Count.ToString() ?? "-")} t={clock.ElapsedMilliseconds}");
+            return sp;
+        }
+
+        static long Hash(int[] v, int off, int size)
+        {
+            unchecked
+            {
+                long h = 1469598103934665603L ^ size;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    h = (h ^ v[off + d]) * 1099511628211L;
+                }
+                return h;
+            }
+        }
+
+        void BuildHalfTable(Space sp)
+        {
+            int n = sp.Units.Count;
+            long c1 = n + 1, c2 = (long)n * (n + 1) / 2, c3 = (long)n * (n + 1) * (n + 2) / 6;
+            const long limit = 400000;
+            sp.H = c1 + c2 + c3 <= limit ? 3 : (c1 + c2 <= limit ? 2 : 1);
+            int h = sp.H;
+            var sums = new List<int>();
+            var unitsL = new List<int>();
+            var sizes = new List<int>();
+            var ay = new List<int>();
+            var an = new List<int>();
+            var cur = new int[Attr.Count];
+            var pick = new int[h];
+            var cnt = new int[n];
+            void Emit(int size, int areaY, int areaN)
+            {
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    sums.Add(cur[d]);
+                }
+                for (int i = 0; i < h; i++)
+                {
+                    unitsL.Add(i < size ? pick[i] : -1);
+                }
+                sizes.Add(size);
+                ay.Add(areaY);
+                an.Add(areaN);
+            }
+            void Rec(int start, int size, int areaY, int areaN)
+            {
+                Emit(size, areaY, areaN);
+                if (size == h)
+                {
+                    return;
+                }
+                for (int u = start; u < n; u++)
+                {
+                    var unit = sp.Units[u];
+                    cnt[u]++;
+                    if (sp.Over(cnt, u))
+                    {
+                        cnt[u]--;
+                        continue;
+                    }
+                    cnt[u]--;
+                    int y2 = areaY + (unit.Side == Side.Yang ? unit.Size : 0);
+                    int n2 = areaN + (unit.Side == Side.Yin ? unit.Size : 0);
+                    if (y2 > capYang || n2 > capYin)
+                    {
+                        continue;
+                    }
+                    cnt[u]++;
+                    pick[size] = u;
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        cur[d] += unit.Contrib[d];
+                    }
+                    if (GeometryOk(sp, cnt, unit))
+                    {
+                        Rec(u, size + 1, y2, n2);
+                    }
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        cur[d] -= unit.Contrib[d];
+                    }
+                    cnt[u]--;
+                }
+            }
+            Rec(0, 0, 0, 0);
+            sp.EntryCount = sizes.Count;
+            sp.EntrySum = sums.ToArray();
+            sp.EntryUnits = unitsL.ToArray();
+            sp.EntrySize = sizes.ToArray();
+            sp.EntryAreaYang = ay.ToArray();
+            sp.EntryAreaYin = an.ToArray();
+            sp.Next = new int[sp.EntryCount];
+            sp.BySize = Enumerable.Range(0, h + 1).Select(_ => new List<int>()).ToArray();
+            for (int e = 0; e < sp.EntryCount; e++)
+            {
+                long key = Hash(sp.EntrySum, e * Attr.Count, sp.EntrySize[e]);
+                sp.Next[e] = sp.Head.TryGetValue(key, out int head) ? head : -1;
+                sp.Head[key] = e;
+                sp.BySize[sp.EntrySize[e]].Add(e);
+            }
+        }
+
+        // 只按形状数一侧的多重集合是否装得下（小丹炉才有表）
+        bool GeometryOk(Space sp, int[] cnt, Unit changed)
+        {
+            int pool = (int)changed.Side;
+            var set = sp.Packable[pool];
+            if (set == null)
+            {
+                return true;
+            }
+            long h = 0;
+            var tc = new int[typeShapes.Count];
+            for (int u = 0; u < cnt.Length; u++)
+            {
+                if (cnt[u] > 0 && sp.Units[u].Side == changed.Side)
+                {
+                    tc[sp.Units[u].Type] += cnt[u];
+                }
+            }
+            for (int t = 0; t < tc.Length; t++)
+            {
+                if (tc[t] > 0)
+                {
+                    if (tc[t] >= sp.Zobrist.GetLength(2))
+                    {
+                        return false;
+                    }
+                    h ^= sp.Zobrist[pool, t, tc[t]];
+                }
+            }
+            return set.Contains(h);
+        }
+
+        void BuildGeometry(Space sp)
+        {
+            int types = typeShapes.Count;
+            var rng = new Random(12345);
+            sp.Zobrist = new long[3, Math.Max(1, types), 17];
+            for (int a = 0; a < 3; a++)
+            {
+                for (int t = 0; t < types; t++)
+                {
+                    for (int c = 0; c < 17; c++)
+                    {
+                        sp.Zobrist[a, t, c] = ((long)rng.Next() << 32) ^ rng.Next() ^ ((long)rng.Next() << 16);
+                    }
+                }
+            }
+            foreach (Side side in new[] { Side.Yang, Side.Yin })
+            {
+                var grid = side == Side.Yang ? req.Yang : req.Yin;
+                if (grid == null || grid.Area > 16)
+                {
+                    continue;
+                }
+                var present = sp.Units.Where(u => u.Side == side).Select(u => u.Type).Distinct().OrderByDescending(t => typeShapes[t].Count).ToList();
+                var set = new HashSet<long> { 0 };
+                var counts = new int[types];
+                var watch = Stopwatch.StartNew();
+                bool aborted = false;
+                int pool = (int)side;
+                void Rec(int ti, int area, long h)
+                {
+                    if (aborted)
+                    {
+                        return;
+                    }
+                    for (int k = ti; k < present.Count; k++)
+                    {
+                        int t = present[k];
+                        int sz = typeShapes[t].Count;
+                        if (area + sz > grid.Area || counts[t] + 1 >= 17)
+                        {
+                            continue;
+                        }
+                        long h2 = h;
+                        if (counts[t] > 0)
+                        {
+                            h2 ^= sp.Zobrist[pool, t, counts[t]];
+                        }
+                        counts[t]++;
+                        h2 ^= sp.Zobrist[pool, t, counts[t]];
+                        var shapes = new List<List<Cell>>();
+                        for (int q = 0; q < types; q++)
+                        {
+                            for (int r = 0; r < counts[q]; r++)
+                            {
+                                shapes.Add(typeShapes[q]);
+                            }
+                        }
+                        if (set.Contains(h2) || PackFeasible(grid, side, shapes))
+                        {
+                            set.Add(h2);
+                            Rec(k, area + sz, h2);
+                        }
+                        counts[t]--;
+                        if (watch.ElapsedMilliseconds > 300)
+                        {
+                            aborted = true;
+                            return;
+                        }
+                    }
+                }
+                Rec(0, 0, 0);
+                if (!aborted)
+                {
+                    sp.Packable[pool] = set;
+                }
+            }
+        }
+
+        readonly Dictionary<string, bool> packCache = new Dictionary<string, bool>();
+
+        bool PackFeasible(Grid grid, Side side, List<List<Cell>> shapes)
+        {
+            string key = (int)side + ":" + string.Join(",", shapes.Select(TypeOf).OrderBy(t => t));
+            if (packCache.TryGetValue(key, out bool ok))
+            {
+                return ok;
+            }
+            var r = Packer.Pack(grid, shapes, clock, (int)Math.Max(clock.ElapsedMilliseconds + 200, deadline));
+            if (!r.TimedOut)
+            {
+                packCache[key] = r.Ok;
+            }
+            return r.Ok;
+        }
+
+        void BuildDfsTables(Space sp)
+        {
+            var units = sp.Units;
+            sp.PosUnits = new List<int>[Attr.Count];
+            sp.NegUnits = new List<int>[Attr.Count];
+            sp.MaxPos = new int[Attr.Count];
+            sp.MaxNeg = new int[Attr.Count];
             for (int d = 0; d < Attr.Count; d++)
             {
-                posUnits[d] = new List<int>();
-                negUnits[d] = new List<int>();
+                sp.PosUnits[d] = new List<int>();
+                sp.NegUnits[d] = new List<int>();
                 for (int u = 0; u < units.Count; u++)
                 {
                     int c = units[u].Contrib[d];
                     if (c > 0)
                     {
-                        posUnits[d].Add(u);
-                        maxPos[d] = Math.Max(maxPos[d], c);
+                        sp.PosUnits[d].Add(u);
+                        sp.MaxPos[d] = Math.Max(sp.MaxPos[d], c);
                     }
                     else if (c < 0)
                     {
-                        negUnits[d].Add(u);
-                        maxNeg[d] = Math.Max(maxNeg[d], -c);
+                        sp.NegUnits[d].Add(u);
+                        sp.MaxNeg[d] = Math.Max(sp.MaxNeg[d], -c);
                     }
                 }
-                // 大步长优先，能更快凑近（排序放在 maxEff 之后也无妨）
-                posUnits[d] = posUnits[d].OrderByDescending(u => units[u].Contrib[d]).ThenBy(u => units[u].Size).ToList();
-                negUnits[d] = negUnits[d].OrderBy(u => units[u].Contrib[d]).ThenBy(u => units[u].Size).ToList();
+                int dd = d;
+                sp.PosUnits[d] = sp.PosUnits[d].OrderByDescending(u => units[u].Contrib[dd]).ThenBy(u => units[u].Size).ToList();
+                sp.NegUnits[d] = sp.NegUnits[d].OrderBy(u => units[u].Contrib[dd]).ThenBy(u => units[u].Size).ToList();
             }
+            sp.PosPerCell = new double[3][];
+            sp.NegPerCell = new double[3][];
+            for (int side = 1; side <= 2; side++)
+            {
+                sp.PosPerCell[side] = new double[Attr.Count];
+                sp.NegPerCell[side] = new double[Attr.Count];
+                foreach (var u in units.Where(x => (int)x.Side == side))
+                {
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        double v = (double)u.Contrib[d] / u.Size;
+                        sp.PosPerCell[side][d] = Math.Max(sp.PosPerCell[side][d], v);
+                        sp.NegPerCell[side][d] = Math.Max(sp.NegPerCell[side][d], -v);
+                    }
+                }
+            }
+            sp.MaxEff = 0;
             foreach (var u in units)
             {
                 double eff = 0;
@@ -208,32 +637,29 @@ namespace ZaohuaAutoCraft.Solver
                     int c = u.Contrib[d];
                     if (c > 0)
                     {
-                        eff += (double)c / maxPos[d];
+                        eff += (double)c / sp.MaxPos[d];
                     }
                     else if (c < 0)
                     {
-                        eff += (double)-c / maxNeg[d];
+                        eff += (double)-c / sp.MaxNeg[d];
                     }
                 }
-                maxEff = Math.Max(maxEff, eff);
+                sp.MaxEff = Math.Max(sp.MaxEff, eff);
             }
-            BuildDistTables();
-        }
-
-        void BuildDistTables()
-        {
-            dist1d = new int[Attr.Count][];
-            band = new int[Attr.Count];
+            // 单维下界表：只看第 d 维，凑出余量 v 至少要几件（忽略库存与其它维）。-1 表示凑不出
+            sp.Dist1d = new int[Attr.Count][];
+            sp.Band = new int[Attr.Count];
             for (int d = 0; d < Attr.Count; d++)
             {
-                var coins = units.Select(u => u.Contrib[d]).Where(c => c != 0).Distinct().ToArray();
-                int maxCoin = Math.Max(maxPos[d], maxNeg[d]);
+                int dd = d;
+                var coins = units.Select(u => u.Contrib[dd]).Where(c => c != 0).Distinct().ToArray();
+                int maxCoin = Math.Max(sp.MaxPos[d], sp.MaxNeg[d]);
                 int b = Math.Abs(req.Need[d]) + 2 * maxCoin;
                 if (b > 200000)
                 {
                     continue;
                 }
-                band[d] = b;
+                sp.Band[d] = b;
                 var dist = new int[2 * b + 1];
                 for (int i = 0; i < dist.Length; i++)
                 {
@@ -257,19 +683,151 @@ namespace ZaohuaAutoCraft.Solver
                         q.Enqueue(w);
                     }
                 }
-                dist1d[d] = dist;
+                sp.Dist1d[d] = dist;
             }
         }
 
-        void Dfs(int[] r, int left, int[] usage, int areaYang, int areaYin, int capYang, int capYin, List<int[]> found, HashSet<string> seen)
+        int MaxDepth(Space sp)
         {
-            if (timedOut || found.Count >= MaxCombosPerDepth)
+            return Math.Min(req.MaxPieces, (capYang + capYin) / Math.Max(1, sp.MinSize));
+        }
+
+        /// <summary>恰好 k 件、属性正好凑齐的组合（每类用几件），最多 cap 个。</summary>
+        List<int[]> Combos(Space sp, int k, int cap)
+        {
+            var found = new List<int[]>();
+            if (k <= 2 * sp.H)
+            {
+                HalfLookup(sp, k, cap, found);
+            }
+            else
+            {
+                var usage = new int[sp.Units.Count];
+                var seen = new HashSet<string>();
+                Dfs(sp, req.Need.ToArray(), k, usage, 0, 0, found, seen, cap);
+            }
+            combosTried += found.Count;
+            Debug?.Invoke($"  k={k} found={found.Count} t={clock.ElapsedMilliseconds}");
+            return found;
+        }
+
+        void HalfLookup(Space sp, int k, int cap, List<int[]> found)
+        {
+            int b = k / 2, a = k - b;
+            if (a > sp.H)
             {
                 return;
             }
-            if (clock.ElapsedMilliseconds > passLimitMs)
+            int n = sp.Units.Count;
+            var target = new int[Attr.Count];
+            var seen = new HashSet<string>();
+            var cnt = new int[n];
+            foreach (int ea in sp.BySize[a])
+            {
+                if (found.Count >= cap || Late())
+                {
+                    return;
+                }
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    target[d] = req.Need[d] - sp.EntrySum[ea * Attr.Count + d];
+                }
+                if (!sp.Head.TryGetValue(Hash(target, 0, b), out int eb))
+                {
+                    continue;
+                }
+                for (; eb >= 0; eb = sp.Next[eb])
+                {
+                    if (sp.EntrySize[eb] != b || (a == b && eb < ea))
+                    {
+                        continue;
+                    }
+                    bool same = true;
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        if (sp.EntrySum[eb * Attr.Count + d] != target[d])
+                        {
+                            same = false;
+                            break;
+                        }
+                    }
+                    if (!same)
+                    {
+                        continue;
+                    }
+                    if (sp.EntryAreaYang[ea] + sp.EntryAreaYang[eb] > capYang || sp.EntryAreaYin[ea] + sp.EntryAreaYin[eb] > capYin)
+                    {
+                        continue;
+                    }
+                    var picked = new List<int>(k);
+                    for (int i = 0; i < sp.H; i++)
+                    {
+                        int ua = sp.EntryUnits[ea * sp.H + i], ub = sp.EntryUnits[eb * sp.H + i];
+                        if (ua >= 0)
+                        {
+                            picked.Add(ua);
+                        }
+                        if (ub >= 0)
+                        {
+                            picked.Add(ub);
+                        }
+                    }
+                    bool ok = true;
+                    foreach (int u in picked)
+                    {
+                        cnt[u]++;
+                    }
+                    foreach (int u in picked)
+                    {
+                        if (sp.Over(cnt, u))
+                        {
+                            ok = false;
+                        }
+                    }
+                    if (ok)
+                    {
+                        foreach (int u in picked.Distinct())
+                        {
+                            if (!GeometryOk(sp, cnt, sp.Units[u]))
+                            {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (ok)
+                    {
+                        picked.Sort();
+                        if (seen.Add(string.Join(",", picked)))
+                        {
+                            found.Add(cnt.ToArray());
+                        }
+                    }
+                    foreach (int u in picked)
+                    {
+                        cnt[u]--;
+                    }
+                    if (found.Count >= cap)
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+
+        bool Late()
+        {
+            if (clock.ElapsedMilliseconds > deadline)
             {
                 timedOut = true;
+            }
+            return timedOut;
+        }
+
+        void Dfs(Space sp, int[] r, int left, int[] usage, int areaYang, int areaYin, List<int[]> found, HashSet<string> seen, int cap)
+        {
+            if (found.Count >= cap || Late())
+            {
                 return;
             }
             bool zero = true;
@@ -293,10 +851,26 @@ namespace ZaohuaAutoCraft.Solver
             {
                 return;
             }
+            // 最后几件直接查折半表，省掉最宽的几层
+            if (left <= sp.H)
+            {
+                TailLookup(sp, r, left, usage, areaYang, areaYin, found, seen, cap);
+                return;
+            }
             // 剩余格子不够再放 left 件最小的材料
-            if ((long)left * minSize > (capYang - areaYang) + (capYin - areaYin))
+            if ((long)left * sp.MinSize > (capYang - areaYang) + (capYin - areaYin))
             {
                 return;
+            }
+            // 面积界：剩下的格子全塞「每格最强」的材料也推不动余量就剪掉
+            int freeY = capYang - areaYang, freeN = capYin - areaYin;
+            for (int d = 0; d < Attr.Count; d++)
+            {
+                if (r[d] > 0 ? freeY * sp.PosPerCell[1][d] + freeN * sp.PosPerCell[2][d] < r[d] - 1e-9
+                             : r[d] < 0 && freeY * sp.NegPerCell[1][d] + freeN * sp.NegPerCell[2][d] < -r[d] - 1e-9)
+                {
+                    return;
+                }
             }
             // 界：每个维度剩余件数推得动余量；同时挑候选最少的维度分支
             int best = -1, bestCount = int.MaxValue;
@@ -304,26 +878,26 @@ namespace ZaohuaAutoCraft.Solver
             {
                 if (r[d] > 0)
                 {
-                    if ((long)maxPos[d] * left < r[d])
+                    if ((long)sp.MaxPos[d] * left < r[d])
                     {
                         return;
                     }
-                    if (posUnits[d].Count < bestCount)
+                    if (sp.PosUnits[d].Count < bestCount)
                     {
                         best = d;
-                        bestCount = posUnits[d].Count;
+                        bestCount = sp.PosUnits[d].Count;
                     }
                 }
                 else if (r[d] < 0)
                 {
-                    if ((long)maxNeg[d] * left < -r[d])
+                    if ((long)sp.MaxNeg[d] * left < -r[d])
                     {
                         return;
                     }
-                    if (negUnits[d].Count < bestCount)
+                    if (sp.NegUnits[d].Count < bestCount)
                     {
                         best = d;
-                        bestCount = negUnits[d].Count;
+                        bestCount = sp.NegUnits[d].Count;
                     }
                 }
             }
@@ -333,22 +907,22 @@ namespace ZaohuaAutoCraft.Solver
             {
                 if (r[d] > 0)
                 {
-                    pot += (double)r[d] / maxPos[d];
+                    pot += (double)r[d] / sp.MaxPos[d];
                 }
                 else if (r[d] < 0)
                 {
-                    pot += (double)-r[d] / maxNeg[d];
+                    pot += (double)-r[d] / sp.MaxNeg[d];
                 }
             }
-            if (pot > maxEff * left + 1e-9)
+            if (pot > sp.MaxEff * left + 1e-9)
             {
                 return;
             }
             for (int d = 0; d < Attr.Count; d++)
             {
-                var dist = dist1d[d];
-                int b = band[d];
-                if (r[d] == 0 || dist == null || Math.Abs(r[d]) > b - Math.Max(maxPos[d], maxNeg[d]))
+                var dist = sp.Dist1d[d];
+                int b = sp.Band[d];
+                if (r[d] == 0 || dist == null || Math.Abs(r[d]) > b - Math.Max(sp.MaxPos[d], sp.MaxNeg[d]))
                 {
                     continue;
                 }
@@ -358,11 +932,14 @@ namespace ZaohuaAutoCraft.Solver
                     return;
                 }
             }
-            var cands = r[best] > 0 ? posUnits[best] : negUnits[best];
+            var cands = r[best] > 0 ? sp.PosUnits[best] : sp.NegUnits[best];
             foreach (int u in cands)
             {
-                var unit = units[u];
-                if (usage[u] >= unit.Stock)
+                var unit = sp.Units[u];
+                usage[u]++;
+                bool over = sp.Over(usage, u);
+                usage[u]--;
+                if (over)
                 {
                     continue;
                 }
@@ -380,28 +957,83 @@ namespace ZaohuaAutoCraft.Solver
                     continue;
                 }
                 usage[u]++;
-                string key = string.Join(",", usage);
-                if (seen.Add(key))
+                if (GeometryOk(sp, usage, unit) && seen.Add(string.Join(",", usage)))
                 {
                     for (int d = 0; d < Attr.Count; d++)
                     {
                         r[d] -= unit.Contrib[d];
                     }
-                    Dfs(r, left - 1, usage, ay, an, capYang, capYin, found, seen);
+                    Dfs(sp, r, left - 1, usage, ay, an, found, seen, cap);
                     for (int d = 0; d < Attr.Count; d++)
                     {
                         r[d] += unit.Contrib[d];
                     }
                 }
                 usage[u]--;
-                if (timedOut || found.Count >= MaxCombosPerDepth)
+                if (found.Count >= cap || timedOut)
                 {
                     return;
                 }
             }
         }
 
-        (int[] usage, int maxGrade, int gradeSum, long price) Score(int[] usage)
+        void TailLookup(Space sp, int[] r, int left, int[] usage, int areaYang, int areaYin, List<int[]> found, HashSet<string> seen, int cap)
+        {
+            if (!sp.Head.TryGetValue(Hash(r, 0, left), out int e))
+            {
+                return;
+            }
+            for (; e >= 0 && found.Count < cap; e = sp.Next[e])
+            {
+                if (sp.EntrySize[e] != left || areaYang + sp.EntryAreaYang[e] > capYang || areaYin + sp.EntryAreaYin[e] > capYin)
+                {
+                    continue;
+                }
+                bool same = true;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (sp.EntrySum[e * Attr.Count + d] != r[d])
+                    {
+                        same = false;
+                        break;
+                    }
+                }
+                if (!same)
+                {
+                    continue;
+                }
+                int added = 0;
+                bool ok = true;
+                for (int i = 0; i < sp.H; i++)
+                {
+                    int u = sp.EntryUnits[e * sp.H + i];
+                    if (u < 0)
+                    {
+                        break;
+                    }
+                    usage[u]++;
+                    added = i + 1;
+                    if (sp.Over(usage, u) || !GeometryOk(sp, usage, sp.Units[u]))
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok && seen.Add(string.Join(",", usage)))
+                {
+                    found.Add(usage.ToArray());
+                }
+                for (int i = 0; i < added; i++)
+                {
+                    usage[sp.EntryUnits[e * sp.H + i]]--;
+                }
+            }
+        }
+
+        // ───────────────────────── 排序键 ─────────────────────────
+
+        /// <summary>组合的偏好键（越小越好）：最高品阶、品阶和、价格。</summary>
+        IComparable[] GradeKey(Space sp, int[] usage)
         {
             int maxGrade = 0, gradeSum = 0;
             long price = 0;
@@ -411,29 +1043,333 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     continue;
                 }
-                var m = req.Materials[units[u].Mats[0]];
-                maxGrade = Math.Max(maxGrade, m.Grade);
-                gradeSum += m.Grade * usage[u];
-                price += (long)m.Price * usage[u];
+                var unit = sp.Units[u];
+                maxGrade = Math.Max(maxGrade, unit.Grade);
+                gradeSum += unit.Grade * usage[u];
+                price += (long)req.Materials[unit.Mats[0]].Price * usage[u];
             }
-            return (usage, maxGrade, gradeSum, price);
+            return new IComparable[] { maxGrade, gradeSum, price };
         }
 
-        Solution TryPack(int[] usage)
+        static int CompareKeys(IComparable[] a, IComparable[] b)
+        {
+            for (int i = 0; i < a.Length; i++)
+            {
+                int c = a[i].CompareTo(b[i]);
+                if (c != 0)
+                {
+                    return c;
+                }
+            }
+            return 0;
+        }
+
+        // ───────────────────────── 各模式 ─────────────────────────
+
+        /// <summary>
+        /// 件数最少：逐层找，找到第一层后在这一层（不够 TopK 再加一层）里按 key 排序取前几个能装下的。
+        /// </summary>
+        List<Solution> SolveMinPieces(List<List<Unit>> passes, int batch, long until, int extraLevels = 1)
+        {
+            var sols = new List<Solution>();
+            var seen = new HashSet<string>();
+            foreach (var set in passes)
+            {
+                var sp = BuildSpace(set, batch);
+                int firstK = -1;
+                for (int k = 1; k <= MaxDepth(sp) && clock.ElapsedMilliseconds < until; k++)
+                {
+                    if (firstK >= 0 && (k > firstK + extraLevels || sols.Count >= req.TopK))
+                    {
+                        break;
+                    }
+                    var combos = Combos(sp, k, MaxCombosPerDepth);
+                    foreach (var c in combos.OrderBy(c => GradeKey(sp, c), Comparer<IComparable[]>.Create(CompareKeys)))
+                    {
+                        if (sols.Count >= req.TopK || clock.ElapsedMilliseconds > until)
+                        {
+                            break;
+                        }
+                        var sol = TryPack(sp, c);
+                        if (sol == null)
+                        {
+                            anyNoFit = true;
+                            continue;
+                        }
+                        if (seen.Add(UsageKey(sp, c)))
+                        {
+                            sol.Batches = batch;
+                            sols.Add(sol);
+                            if (firstK < 0)
+                            {
+                                firstK = k;
+                            }
+                        }
+                    }
+                }
+                if (sols.Count > 0)
+                {
+                    break;
+                }
+            }
+            return sols;
+        }
+
+        static string UsageKey(Space sp, int[] usage)
+        {
+            return string.Join(",", Enumerable.Range(0, usage.Length).Where(u => usage[u] > 0).Select(u => sp.Units[u].GetHashCode() + "x" + usage[u]).OrderBy(s => s));
+        }
+
+        /// <summary>低阶优先：最高品阶从低往高试，第一个有解的门槛内再按品阶和、价格排。</summary>
+        List<Solution> SolveLowGrade()
+        {
+            var grades = allUnits.Select(u => u.Grade).Distinct().OrderBy(g => g).ToList();
+            for (int i = 0; i < grades.Count; i++)
+            {
+                int g = grades[i];
+                bool last = i == grades.Count - 1;
+                long remain = deadline - clock.ElapsedMilliseconds;
+                long until = last ? deadline : clock.ElapsedMilliseconds + Math.Max(50, remain / (grades.Count - i));
+                var passes = Passes(allUnits.Where(u => u.Grade <= g));
+                var sols = SolveMinPieces(passes, 1, until, 2);
+                if (sols.Count > 0)
+                {
+                    return sols.OrderBy(s => KeyOf(s), Comparer<IComparable[]>.Create(CompareKeys)).ToList();
+                }
+                timedOut = false;
+                if (clock.ElapsedMilliseconds > deadline)
+                {
+                    timedOut = true;
+                    break;
+                }
+            }
+            return new List<Solution>();
+        }
+
+        static IComparable[] KeyOf(Solution s)
+        {
+            return new IComparable[] { s.Placements.Max(p => p.Material.Grade), s.Placements.Sum(p => p.Material.Grade), s.Placements.Sum(p => (long)p.Material.Price) };
+        }
+
+        /// <summary>最多可炼次数：批数可行性是单调的，二分找最大批数。</summary>
+        List<Solution> SolveMaxBatches()
+        {
+            var passes = Passes(allUnits);
+            var first = SolveMinPieces(passes, 1, deadline / 4, 0);
+            if (first.Count == 0)
+            {
+                return first;
+            }
+            int lo = 1;
+            int hi = (int)Math.Min(100000, req.Materials.Where(m => m.Stock > 0).Max(m => m.Stock));
+            var best = first;
+            int steps = (int)Math.Ceiling(Math.Log(Math.Max(2, hi), 2)) + 1;
+            while (lo < hi && clock.ElapsedMilliseconds < deadline)
+            {
+                int mid = lo + (hi - lo + 1) / 2;
+                long slice = Math.Max(60, (deadline - clock.ElapsedMilliseconds) / Math.Max(1, steps--));
+                timedOut = false;
+                var sols = SolveMinPieces(passes, mid, clock.ElapsedMilliseconds + slice, 0);
+                if (sols.Count > 0)
+                {
+                    lo = mid;
+                    best = sols;
+                }
+                else
+                {
+                    hi = mid - 1;
+                }
+            }
+            timedOut = false;
+            return best;
+        }
+
+        /// <summary>
+        /// 最多成丹 / 最高品质：多收几层候选组合，按「材料本身符合规则的件数」排序，
+        /// 每个能装下的都调一下摆位，取分数最高的几个。
+        /// </summary>
+        List<Solution> SolvePlacementModes(DrugMode mode)
+        {
+            long collectUntil = deadline * 35 / 100;
+            var cands = new List<(Space sp, int[] usage, int k, int aff)>();
+            foreach (var set in Passes(allUnits))
+            {
+                var sp = BuildSpace(set, 1);
+                int firstK = -1;
+                for (int k = 1; k <= MaxDepth(sp) && clock.ElapsedMilliseconds < collectUntil; k++)
+                {
+                    if (firstK >= 0 && k > firstK + 3)
+                    {
+                        break;
+                    }
+                    var combos = Combos(sp, k, MaxCombosPerDepth);
+                    if (combos.Count > 0 && firstK < 0)
+                    {
+                        firstK = k;
+                    }
+                    foreach (var c in combos)
+                    {
+                        int aff = 0;
+                        for (int u = 0; u < c.Length; u++)
+                        {
+                            aff += c[u] * sp.Units[u].Affinity;
+                        }
+                        cands.Add((sp, c, k, aff));
+                    }
+                }
+                if (cands.Count > 0)
+                {
+                    break;
+                }
+            }
+            timedOut = false;
+            var scored = new List<(Solution sol, long score, string key)>();
+            var seen = new HashSet<string>();
+            foreach (var c in cands.OrderByDescending(c => c.aff).ThenBy(c => c.k))
+            {
+                if (clock.ElapsedMilliseconds > deadline * 80 / 100 && scored.Count > 0)
+                {
+                    break;
+                }
+                if (clock.ElapsedMilliseconds > deadline)
+                {
+                    break;
+                }
+                var sol = TryPack(c.sp, c.usage);
+                if (sol == null)
+                {
+                    anyNoFit = true;
+                    continue;
+                }
+                string key = UsageKey(c.sp, c.usage);
+                if (!seen.Add(key))
+                {
+                    continue;
+                }
+                long score = Optimize(sol, clock.ElapsedMilliseconds + 25, mode);
+                scored.Add((sol, score, key));
+            }
+            // 前几名再多调一会儿
+            var top = scored.OrderByDescending(s => s.score).ThenBy(s => s.sol.PieceCount).Take(req.TopK).ToList();
+            long per = Math.Max(30, (req.TimeLimitMs + 400 - clock.ElapsedMilliseconds) / Math.Max(1, top.Count));
+            var result = new List<(Solution sol, long score)>();
+            int seed = 7;
+            foreach (var t in top)
+            {
+                long s = Optimize(t.sol, Math.Min(clock.ElapsedMilliseconds + per, req.TimeLimitMs + 400), mode, seed++);
+                result.Add((t.sol, s));
+            }
+            return result.OrderByDescending(r => r.score).ThenBy(r => r.sol.PieceCount).Select(r => r.sol).ToList();
+        }
+
+        long Objective(DrugMode mode, int count, int quality)
+        {
+            return mode == DrugMode.MaxCount ? count * 10L + quality : quality * 100000L + count;
+        }
+
+        long Optimize(Solution sol, long until, DrugMode mode, int seed = 1)
+        {
+            if (eval == null)
+            {
+                return 0;
+            }
+            var opt = new LayoutOptimizer(eval, req.Yang, req.Yin, req.BaseCount, req.BaseQuality, (c, q) => Objective(mode, c, q));
+            var (cnt, qual) = opt.Optimize(sol, clock, until, seed);
+            return Objective(mode, cnt, qual);
+        }
+
+        /// <summary>
+        /// 无解时的补料建议：已有材料成本 0，可买材料按单价计，一次求「精确凑齐且购买花费最少」。
+        /// </summary>
+        List<Solution> SolveTopUp()
+        {
+            var cands = new List<(Space sp, int[] usage, long cost, int k)>();
+            long collectUntil = deadline * 60 / 100;
+            foreach (var set in Passes(allUnits))
+            {
+                var sp = BuildSpace(set, 1);
+                int firstK = -1;
+                for (int k = 1; k <= MaxDepth(sp) && clock.ElapsedMilliseconds < collectUntil; k++)
+                {
+                    if (firstK >= 0 && k > firstK + 3)
+                    {
+                        break;
+                    }
+                    var combos = Combos(sp, k, MaxCombosPerDepth * 3);
+                    if (combos.Count > 0 && firstK < 0)
+                    {
+                        firstK = k;
+                    }
+                    foreach (var c in combos)
+                    {
+                        cands.Add((sp, c, BuyCost(sp, c), k));
+                    }
+                }
+                if (cands.Count > 0)
+                {
+                    break;
+                }
+            }
+            timedOut = false;
+            var sols = new List<Solution>();
+            var seen = new HashSet<string>();
+            foreach (var c in cands.OrderBy(c => c.cost).ThenBy(c => c.k))
+            {
+                if (sols.Count >= req.TopK || clock.ElapsedMilliseconds > deadline)
+                {
+                    break;
+                }
+                var sol = TryPack(c.sp, c.usage);
+                if (sol == null)
+                {
+                    anyNoFit = true;
+                    continue;
+                }
+                if (seen.Add(UsageKey(c.sp, c.usage)))
+                {
+                    sols.Add(sol);
+                }
+            }
+            return sols;
+        }
+
+        long BuyCost(Space sp, int[] usage)
+        {
+            long cost = 0;
+            for (int u = 0; u < usage.Length; u++)
+            {
+                if (usage[u] == 0)
+                {
+                    continue;
+                }
+                var unit = sp.Units[u];
+                long owned = unit.Mats.Sum(i => req.Materials[i].Stock);
+                long buy = Math.Max(0, usage[u] - owned);
+                if (buy > 0)
+                {
+                    cost += buy * Math.Max(0, unit.BuyPrice);
+                }
+            }
+            return cost;
+        }
+
+        // ───────────────────────── 装箱 ─────────────────────────
+
+        Solution TryPack(Space sp, int[] usage)
         {
             var sol = new Solution();
-            var left = req.Materials.Select(m => m.Stock / Math.Max(1, req.Batch)).ToArray();
+            var left = req.Materials.Select(m => m.Stock / Math.Max(1, sp.Batch)).ToArray();
             foreach (Side side in new[] { Side.Yang, Side.Yin })
             {
                 var pieces = new List<Material>();
                 for (int u = 0; u < usage.Length; u++)
                 {
-                    if (units[u].Side != side)
+                    if (sp.Units[u].Side != side)
                     {
                         continue;
                     }
                     int need = usage[u];
-                    foreach (int mi in units[u].Mats)
+                    foreach (int mi in sp.Units[u].Mats)
                     {
                         while (need > 0 && left[mi] > 0)
                         {
@@ -442,16 +1378,40 @@ namespace ZaohuaAutoCraft.Solver
                             need--;
                         }
                     }
+                    if (need > 0 && !req.TopUp)
+                    {
+                        // 阴阳两侧共用的材料不够分
+                        return null;
+                    }
+                    if (need > 0 && req.TopUp)
+                    {
+                        // 不够的部分买类内最便宜的可买材料
+                        var m = sp.Units[u].Mats.Select(i => req.Materials[i]).Where(x => x.Buyable).OrderBy(x => x.Price).First();
+                        sol.ToBuy[m] = (sol.ToBuy.TryGetValue(m, out int b) ? b : 0) + need;
+                        sol.BuyCost += (long)m.Price * need;
+                        for (; need > 0; need--)
+                        {
+                            pieces.Add(m);
+                        }
+                    }
                 }
                 if (pieces.Count == 0)
                 {
                     continue;
                 }
                 var grid = side == Side.Yang ? req.Yang : req.Yin;
-                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, req.TimeLimitMs);
+                string key = (int)side + ":" + string.Join(",", pieces.Select(p => TypeOf(p.Shape)).OrderBy(t => t));
+                if (packCache.TryGetValue(key, out bool ok) && !ok)
+                {
+                    return null;
+                }
+                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, (int)Math.Max(deadline, clock.ElapsedMilliseconds + 100));
+                if (!packed.TimedOut)
+                {
+                    packCache[key] = packed.Ok;
+                }
                 if (!packed.Ok)
                 {
-                    timedOut |= packed.TimedOut;
                     return null;
                 }
                 for (int i = 0; i < pieces.Count; i++)
@@ -460,9 +1420,6 @@ namespace ZaohuaAutoCraft.Solver
                     sol.Placements.Add(new Placement { Material = pieces[i], Side = side, X = s.x, Y = s.y, Rotate = s.rotate });
                 }
             }
-            sol.MaxGrade = sol.Placements.Count == 0 ? 0 : sol.Placements.Max(p => p.Material.Grade);
-            sol.GradeSum = sol.Placements.Sum(p => p.Material.Grade);
-            sol.Price = sol.Placements.Sum(p => (long)p.Material.Price);
             return sol;
         }
 
@@ -504,7 +1461,8 @@ namespace ZaohuaAutoCraft.Solver
             }
             foreach (var g in sol.Placements.GroupBy(p => p.Material))
             {
-                if (g.LongCount() * req.Batch > g.Key.Stock)
+                long bought = sol.ToBuy.TryGetValue(g.Key, out int b) ? b : 0;
+                if (g.LongCount() - bought > g.Key.Stock)
                 {
                     return $"{g.Key.Name} 库存不足";
                 }

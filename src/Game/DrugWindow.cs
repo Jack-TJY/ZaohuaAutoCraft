@@ -15,7 +15,7 @@ namespace ZaohuaAutoCraft
     {
         const int WindowId = 0x5A41;
 
-        Rect rect = new Rect(40, 80, 460, 640);
+        Rect rect = new Rect(40, 60, 500, 700);
 
         bool visible;
 
@@ -111,8 +111,9 @@ namespace ZaohuaAutoCraft
                 return;
             }
             var bonus = Game.DrugBridge.GetFixedBonus(f);
+            string extra = (bonus.Count != 0 ? $"  丹数+{bonus.Count}" : "") + (bonus.Quality != 0 ? $"  品质+{bonus.Quality}" : "");
             string name = Singleton<TbDataImpl>.Instance.GetItemCfg(f.id)?.GetName ?? f.id;
-            furnaceText = $"丹炉：{name}  阳 {f.yangGridSize.x}×{f.yangGridSize.y}  阴 {f.yinGridSize.x}×{f.yinGridSize.y}  属性加成：{Game.DrugBridge.AttrText(bonus)}";
+            furnaceText = $"丹炉：{name}  阳 {f.yangGridSize.x}×{f.yangGridSize.y}  阴 {f.yinGridSize.x}×{f.yinGridSize.y}  属性加成：{Game.DrugBridge.AttrText(bonus.Attrs)}{extra}";
         }
 
         public void OnGUI()
@@ -204,6 +205,12 @@ namespace ZaohuaAutoCraft
             GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})");
         }
 
+        static readonly string[] ModeNames = { "最少材料", "低阶优先", "最多成丹", "最高品质", "最多可炼次数" };
+
+        int chosen;
+
+        bool lastTopUp;
+
         void DrawWindow(int id)
         {
             GUILayout.Label(furnaceText);
@@ -217,7 +224,7 @@ namespace ZaohuaAutoCraft
             search = GUILayout.TextField(search ?? "", GUILayout.Width(160));
             GUILayout.EndHorizontal();
 
-            listScroll = GUILayout.BeginScrollView(listScroll, GUILayout.Height(230));
+            listScroll = GUILayout.BeginScrollView(listScroll, GUILayout.Height(190));
             foreach (var r in recipes)
             {
                 if (!all && !r.Unlocked)
@@ -234,35 +241,71 @@ namespace ZaohuaAutoCraft
                     selected = r;
                     result = null;
                     status = "";
+                    // 布局内容变了，结束本帧 GUI，避免 Layout/Repaint 控件数不一致报错
+                    GUIUtility.ExitGUI();
                 }
             }
             GUILayout.EndScrollView();
+
+            int mode = Mathf.Clamp((int)Plugin.DefaultMode.Value, 0, ModeNames.Length - 1);
+            int newMode = GUILayout.SelectionGrid(mode, ModeNames, 3);
+            if (newMode != mode)
+            {
+                Plugin.DefaultMode.Value = (DrugMode)newMode;
+            }
 
             if (selected != null)
             {
                 GUILayout.Label($"已选：{selected.ItemName}  要求 {selected.AttrText}");
                 GUI.enabled = running == null;
-                if (GUILayout.Button(running == null ? "计算摆法（最少材料）" : "计算中…", GUILayout.Height(28)))
+                if (GUILayout.Button(running == null ? $"计算摆法（{ModeNames[newMode]}）" : "计算中…", GUILayout.Height(28)))
                 {
-                    StartSolve();
+                    StartSolve(false);
+                    GUIUtility.ExitGUI();
                 }
                 GUI.enabled = true;
             }
             GUILayout.Label(status);
 
+            if (result != null && result.Solutions.Count == 0 && !lastTopUp && running == null && selected != null)
+            {
+                if (GUILayout.Button("建议补料（算出最便宜的买法）", GUILayout.Height(26)))
+                {
+                    StartSolve(true);
+                    GUIUtility.ExitGUI();
+                }
+            }
+
             if (result?.Best != null)
             {
-                resultScroll = GUILayout.BeginScrollView(resultScroll, GUILayout.Height(160));
-                foreach (var g in result.Best.Placements.GroupBy(p => (p.Side, p.Material)).OrderBy(g => g.Key.Side))
+                for (int i = 0; i < result.Solutions.Count; i++)
                 {
-                    GUILayout.Label($"{(g.Key.Side == Side.Yang ? "阳" : "阴")}  {g.Key.Material.Name} ×{g.Count()}    （{Game.DrugBridge.AttrText(g.Key.Material.Attrs)}）");
+                    var s = result.Solutions[i];
+                    string head = $"方案{i + 1}：{s.PieceCount} 件  成丹 {s.Count}  品质 {s.Quality}" + (lastTopUp ? $"  补料约 {s.BuyCost} 灵石" : $"  可炼 {s.Batches} 次") + $"  最高品阶 {s.MaxGrade}";
+                    if (GUILayout.Toggle(chosen == i, head) && chosen != i)
+                    {
+                        chosen = i;
+                        GUIUtility.ExitGUI();
+                    }
+                }
+                var sol = result.Solutions[Mathf.Clamp(chosen, 0, result.Solutions.Count - 1)];
+                resultScroll = GUILayout.BeginScrollView(resultScroll, GUILayout.Height(130));
+                foreach (var g in sol.Placements.GroupBy(p => (p.Side, p.Material)).OrderBy(g => g.Key.Side))
+                {
+                    int buy = lastTopUp && sol.ToBuy.TryGetValue(g.Key.Material, out int b) ? b : 0;
+                    GUILayout.Label($"{(g.Key.Side == Side.Yang ? "阳" : "阴")}  {g.Key.Material.Name} ×{g.Count()}    （{Game.DrugBridge.AttrText(g.Key.Material.Attrs)}）" + (buy > 0 ? $"  需购买 {buy}" : ""));
                 }
                 GUILayout.EndScrollView();
-                if (GUILayout.Button("摆上", GUILayout.Height(30)))
+                if (lastTopUp)
+                {
+                    GUILayout.Label("买齐标出的材料后，用上面的模式重新计算即可摆放。价格按物品基础价估算。");
+                }
+                else if (GUILayout.Button("摆上", GUILayout.Height(30)))
                 {
                     try
                     {
-                        Game.DrugBridge.Apply(result.Best);
+                        applied = sol;
+                        Game.DrugBridge.Apply(sol);
                         status = "已摆放，正在核对游戏结算…";
                         verifyFrames = 2;
                     }
@@ -276,7 +319,9 @@ namespace ZaohuaAutoCraft
             GUI.DragWindow(new Rect(0, 0, 10000, 22));
         }
 
-        void StartSolve()
+        Solution applied;
+
+        void StartSolve(bool topUp)
         {
             try
             {
@@ -290,14 +335,21 @@ namespace ZaohuaAutoCraft
                 var target = Attr.FromDic(selected.Cfg.AttrLimitDic);
                 request = new DrugRequest
                 {
-                    Materials = Game.DrugBridge.GetMaterials(),
-                    Need = target.Select((v, d) => v - bonus[d]).ToArray(),
+                    Materials = Game.DrugBridge.GetMaterials(topUp),
+                    Need = target.Select((v, d) => v - bonus.Attrs[d]).ToArray(),
                     Yang = new Grid(furnace.yangGridSize.x, furnace.yangGridSize.y),
                     Yin = new Grid(furnace.yinGridSize.x, furnace.yinGridSize.y),
-                    TimeLimitMs = Plugin.TimeLimitMs.Value
+                    TimeLimitMs = Plugin.TimeLimitMs.Value,
+                    Mode = Plugin.DefaultMode.Value,
+                    States = Game.DrugBridge.GetStates(selected.Cfg, bonus),
+                    BaseCount = bonus.Count + selected.Cfg.count,
+                    BaseQuality = bonus.Quality + 1,
+                    TopUp = topUp
                 };
                 result = null;
-                status = $"计算中…（背包材料 {request.Materials.Count} 种，需凑 {Game.DrugBridge.AttrText(request.Need)}）";
+                chosen = 0;
+                lastTopUp = topUp;
+                status = $"计算中…（候选材料 {request.Materials.Count} 种，需凑 {Game.DrugBridge.AttrText(request.Need)}）";
                 var req = request;
                 running = Task.Run(() => new DrugSolver(req).Solve());
             }
@@ -321,18 +373,23 @@ namespace ZaohuaAutoCraft
             result = task.Result;
             if (result.Best == null)
             {
-                status = $"{result.Message}（{result.ElapsedMs} ms）";
+                status = $"{result.Message}（{result.ElapsedMs} ms）" + (lastTopUp ? "；买得到的材料也凑不出" : "");
                 return;
             }
-            string err = DrugSolver.Verify(request, result.Best);
-            if (err != null)
+            foreach (var s in result.Solutions)
             {
-                status = "内部复核失败：" + err;
-                Plugin.Log.LogError(status);
-                result = null;
-                return;
+                string err = DrugSolver.Verify(request, s);
+                if (err != null)
+                {
+                    status = "内部复核失败：" + err;
+                    Plugin.Log.LogError(status);
+                    result.Solutions.Clear();
+                    return;
+                }
             }
-            status = $"找到摆法：共 {result.Best.PieceCount} 件材料（{result.ElapsedMs} ms）。确认后点「摆上」。";
+            status = lastTopUp
+                ? $"补料方案 {result.Solutions.Count} 个（{result.ElapsedMs} ms），最便宜约 {result.Best.BuyCost} 灵石。"
+                : $"找到 {result.Solutions.Count} 个方案（{result.ElapsedMs} ms）" + (result.TimedOut ? "，已到时间上限，未必最优" : "") + "。选一个后点「摆上」。";
         }
 
         void Verify()
@@ -340,10 +397,17 @@ namespace ZaohuaAutoCraft
             try
             {
                 var (placed, recipe, count, quality) = Game.DrugBridge.ReadGameResult();
-                int expected = result?.Best?.PieceCount ?? 0;
+                int expected = applied?.PieceCount ?? 0;
                 if (recipe != null && recipe.id == selected?.Cfg.id && placed == expected)
                 {
+                    bool same = applied == null || (applied.Count == count && applied.Quality == quality);
                     status = $"✓ 游戏已识别为「{selected.ItemName}」，成丹 {count} 颗，品质 {quality}。请点游戏里的「炼制」。";
+                    if (!same)
+                    {
+                        status += $"\n（预测是成丹 {applied.Count}、品质 {applied.Quality}，和游戏不一致，以游戏为准；麻烦把日志发给作者）";
+                        Plugin.Log.LogWarning($"品质/丹数预测不一致：丹方 {selected.Cfg.id} 预测 {applied.Count}/{applied.Quality} 游戏 {count}/{quality}；规则 {string.Join(",", request.States.Select(x => x.Id))}；摆法 " +
+                            string.Join(" ", applied.Placements.Select(p => $"{p.Material.Id}@{(int)p.Side}:{p.X},{p.Y},{p.Rotate}")));
+                    }
                 }
                 else
                 {
