@@ -100,10 +100,21 @@ namespace ZaohuaAutoCraft.Game
             return furnace == null ? null : Singleton<TbDataImpl>.Instance.GetCraftingItemCfg(furnace.itemId.sedId);
         }
 
+        public class FurnaceBonus
+        {
+            public int[] Attrs = new int[Attr.Count];
+
+            public int Count;
+
+            public int Quality;
+
+            public List<int> StateIds = new List<int>();
+        }
+
         /// <summary>
-        /// 丹炉和炼丹天赋给属性的固定加成：用一个空的 CraftingDrugTmp 按 RefreshDrugInfo 的顺序跑一遍游戏自己的效果。
+        /// 丹炉和炼丹天赋的固定加成（属性、丹数、品质、附加药性）：用一个空的 CraftingDrugTmp 按 RefreshDrugInfo 的顺序跑一遍游戏自己的效果。
         /// </summary>
-        public static int[] GetFixedBonus(TbCraftingItemCfg furnaceCfg)
+        public static FurnaceBonus GetFixedBonus(TbCraftingItemCfg furnaceCfg)
         {
             var tmp = new CraftingDrugTmp
             {
@@ -130,13 +141,64 @@ namespace ZaohuaAutoCraft.Game
             {
                 Plugin.Log.LogWarning("读取丹炉加成失败，按无加成计算: " + e.Message);
             }
-            return Attr.FromDic(tmp.attrDic);
+            return new FurnaceBonus { Attrs = Attr.FromDic(tmp.attrDic), Count = tmp.count, Quality = tmp.quality, StateIds = tmp.stateIds.ToList() };
         }
 
-        public static List<Material> GetMaterials()
+        public static DrugState ToState(TbDrugRecipeStateCfg c)
+        {
+            return c == null ? null : new DrugState
+            {
+                Id = c.id,
+                Name = c.name,
+                PoolType = c.poolType,
+                StateType = c.stateType,
+                Area = c.area,
+                Target1 = c.target1,
+                Target2 = c.target2,
+                Relation = c.relation,
+                CalculateType = c.calculateType,
+                BaseEff = c.baseEff
+            };
+        }
+
+        /// <summary>丹方自带 + 丹炉/天赋附加的药性规则。</summary>
+        public static List<DrugState> GetStates(TbDrugRecipeCfg recipe, FurnaceBonus bonus)
         {
             var data = Singleton<TbDataImpl>.Instance;
-            var itemImpl = Singleton<TbItemImpl>.Instance;
+            return bonus.StateIds.Concat(recipe.StateIds).Select(id => ToState(data.GetDrugRecipeStateCfg(id))).Where(s => s != null).ToList();
+        }
+
+        static Material MakeMaterial(string id, long stock)
+        {
+            var data = Singleton<TbDataImpl>.Instance;
+            var item = data.GetItemCfg(id);
+            var craft = data.GetCraftingItemCfg(id);
+            if (item == null || craft == null || craft.attrDic == null || craft.attrDic.Count == 0 || Singleton<TbItemImpl>.Instance.GetParentByTypeId(item.typeId) != 10)
+            {
+                return null;
+            }
+            var draw = data.GetDrawCfg(craft.drawId);
+            if (draw == null)
+            {
+                return null;
+            }
+            return new Material
+            {
+                Id = id,
+                Name = item.GetName,
+                Attrs = Attr.FromDic(craft.attrDic),
+                Shape = draw.Coordinates.Select(c => new Cell(c.x, c.y)).ToList(),
+                Stock = stock,
+                Grade = data.GetGradeCfg(item.gradeId)?.weight ?? 0,
+                Price = item.price,
+                Element = item.attribute,
+                Buyable = item.IsShop == 1 || item.IsTrader == 1
+            };
+        }
+
+        /// <param name="catalog">true 时把背包里没有、但商店/商人能买到的灵草也列进来（库存 0），用于补料建议。</param>
+        public static List<Material> GetMaterials(bool catalog = false)
+        {
             var stock = new Dictionary<string, long>();
             foreach (var pack in Singleton<BsBagImpl>.Instance.GetPackListByNpcStoId(10000L, -1))
             {
@@ -149,27 +211,26 @@ namespace ZaohuaAutoCraft.Game
             var list = new List<Material>();
             foreach (var kv in stock)
             {
-                var item = data.GetItemCfg(kv.Key);
-                var craft = data.GetCraftingItemCfg(kv.Key);
-                if (item == null || craft == null || craft.attrDic == null || craft.attrDic.Count == 0 || itemImpl.GetParentByTypeId(item.typeId) != 10)
+                var m = MakeMaterial(kv.Key, kv.Value);
+                if (m != null)
                 {
-                    continue;
+                    list.Add(m);
                 }
-                var draw = data.GetDrawCfg(craft.drawId);
-                if (draw == null)
+            }
+            if (catalog)
+            {
+                foreach (var c in Singleton<TbDataImpl>.Instance.craftingItemList)
                 {
-                    continue;
+                    if (c?.id == null || stock.ContainsKey(c.id))
+                    {
+                        continue;
+                    }
+                    var m = MakeMaterial(c.id, 0);
+                    if (m != null && m.Buyable)
+                    {
+                        list.Add(m);
+                    }
                 }
-                list.Add(new Material
-                {
-                    Id = kv.Key,
-                    Name = item.GetName,
-                    Attrs = Attr.FromDic(craft.attrDic),
-                    Shape = draw.Coordinates.Select(c => new Cell(c.x, c.y)).ToList(),
-                    Stock = kv.Value,
-                    Grade = data.GetGradeCfg(item.gradeId)?.weight ?? 0,
-                    Price = item.price
-                });
             }
             return list;
         }
