@@ -123,6 +123,54 @@ if (rid != null)
     recipes = recipes.Where(r => r.GetProperty("id").ToString() == rid).ToList();
     DrugSolver.Debug = Console.WriteLine;
 }
+// 用玩家存档的库存和配方复现：SAVE=<存档 json> STOCK=<库存 json> RECIPE=80
+var savePath = Environment.GetEnvironmentVariable("SAVE");
+if (savePath != null)
+{
+    var stock = JsonSerializer.Deserialize<Dictionary<string, long>>(File.ReadAllText(Environment.GetEnvironmentVariable("STOCK")));
+    var mine = mats.Where(m => stock.ContainsKey(m.Id)).Select(m => Copy(m, stock[m.Id])).ToList();
+    var r = recipes[0];
+    var st = r.GetProperty("stateIdStr").ToString().Split(',').Select(int.Parse).Select(i => states[i]).ToList();
+    var yang = new Grid(10, 10);
+    var yin = new Grid(9, 10);
+    int baseCount = 4 + r.GetProperty("count").GetInt32(), baseQuality = 2 + 1;
+    var ev = new DrugStateEvaluator(st, yang, yin);
+    var save = JsonDocument.Parse(File.ReadAllText(savePath)).RootElement;
+    var byId = mats.ToDictionary(m => m.Id);
+    foreach (var t in save.GetProperty("craftingTemplateStoList").EnumerateArray())
+    {
+        if (t.GetProperty("type").GetInt32() != 0 || t.GetProperty("itemLogStoList").GetArrayLength() < 20) continue;
+        var pl = t.GetProperty("itemLogStoList").EnumerateArray().Select(x => new Placement
+        {
+            Material = byId[x.GetProperty("itemId").GetProperty("sedId").GetString()],
+            Side = (Side)x.GetProperty("poolType").GetInt32(),
+            X = x.GetProperty("pos").GetProperty("x").GetInt32(),
+            Y = x.GetProperty("pos").GetProperty("y").GetInt32(),
+            Rotate = x.GetProperty("rotate").GetInt32()
+        }).ToList();
+        var (c0, q0) = ev.Evaluate(ev.BuildBoard(pl), baseCount, baseQuality);
+        Console.WriteLine($"玩家配方 {t.GetProperty("id")}: {pl.Count} 件 → 预测成丹 {c0} 品质 {q0}");
+    }
+    var dump = Environment.GetEnvironmentVariable("DUMP");
+    if (dump != null)
+    {
+        var lines = new List<string> { $"need {string.Join(",", Attr.FromDic(ParseDic(r.GetProperty("attrLimiteStr").GetString())))}", $"base {baseCount} {baseQuality}" };
+        foreach (var x in st) lines.Add($"state {x.Id}\t{x.PoolType}\t{x.StateType}\t{x.Area}\t{x.Target1}\t{x.Target2}\t{x.Relation}\t{x.CalculateType}\t{x.BaseEff}");
+        foreach (var m in mine) lines.Add($"mat {m.Id}\t{string.Join(",", m.Attrs)}\t{string.Join(";", m.Shape.Select(c => c.X + "," + c.Y))}\t{m.Stock}\t{m.Grade}\t{m.Price}\t{m.Element}");
+        File.WriteAllLines(dump, lines);
+    }
+    foreach (int tl in new[] { 3000, 10000 })
+    {
+        var req = new DrugRequest { Materials = mine, Need = Attr.FromDic(ParseDic(r.GetProperty("attrLimiteStr").GetString())), Yang = yang, Yin = yin, TimeLimitMs = tl, Mode = DrugMode.MaxCount, States = st, BaseCount = baseCount, BaseQuality = baseQuality };
+        var res = new DrugSolver(req).Solve();
+        foreach (var sol in res.Solutions)
+        {
+            Console.WriteLine($"[{tl}ms] 求解: {sol.PieceCount} 件 成丹 {sol.Count} 品质 {sol.Quality} 复核 {DrugSolver.Verify(req, sol) ?? "OK"}  " + string.Join(" ", sol.Placements.GroupBy(p => (p.Material.Id, p.Side)).Select(g => $"{g.Key.Id}@{(int)g.Key.Side}x{g.Count()}")));
+        }
+        Console.WriteLine($"  用时 {res.ElapsedMs} ms");
+    }
+    return 0;
+}
 var only = Environment.GetEnvironmentVariable("ONLY");
 bool Want(string tag) => only == null || only.Split(',').Contains(tag);
 

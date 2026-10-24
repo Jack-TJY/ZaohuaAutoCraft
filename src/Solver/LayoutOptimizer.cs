@@ -404,12 +404,15 @@ namespace ZaohuaAutoCraft.Solver
             }
             long score = Search(Score(), clock, Math.Min(deadlineMs, clock.ElapsedMilliseconds + 60));
             var added = new List<(Placement, Placement)>();
+            // 上一轮选中的垫料对：只要它还在涨就一直放它，不用每放一对都把所有候选试一遍（候选多时慢十几倍）
+            (Material a, Material b)? sticky = null;
             while (clock.ElapsedMilliseconds < deadlineMs)
             {
                 // 按「每格涨多少分」挑，免得大块先把地方占满
                 double bestGain = 0;
                 (Material a, Material b, int sa, int sb) bestPick = default;
-                foreach (var (ma, mb) in pairs)
+                var tryList = sticky != null ? new List<(Material, Material)> { sticky.Value } : pairs;
+                foreach (var (ma, mb) in tryList)
                 {
                     long need = ma == mb ? 2 : 1;
                     if (Left(remaining, ma) < need || Left(remaining, mb) < need)
@@ -430,8 +433,14 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 if (bestGain <= 0)
                 {
+                    if (sticky != null)
+                    {
+                        sticky = null;
+                        continue;
+                    }
                     break;
                 }
+                sticky = (bestPick.a, bestPick.b);
                 added.Add((AddPiece(sol, bestPick.a, Side.Yang, bestPick.sa), AddPiece(sol, bestPick.b, Side.Yin, bestPick.sb)));
                 remaining[bestPick.a]--;
                 remaining[bestPick.b]--;
@@ -519,8 +528,12 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 (occ[pool].Hits(spots[s].Around) ? cand : rest).Add(s);
             }
-            // 贴着已有材料的位置全试，其余随机抽一些（区域类规则可能要空旷的地方）
-            foreach (int s in rest.OrderBy(_ => rng.Next()).Take(Math.Max(20, 80 - cand.Count)))
+            // 贴着已有材料的位置最多试 48 个，其余随机抽一些（区域类规则可能要空旷的地方）
+            if (cand.Count > 48)
+            {
+                cand = cand.OrderBy(_ => rng.Next()).Take(48).ToList();
+            }
+            foreach (int s in rest.OrderBy(_ => rng.Next()).Take(Math.Max(12, 64 - cand.Count)))
             {
                 cand.Add(s);
             }

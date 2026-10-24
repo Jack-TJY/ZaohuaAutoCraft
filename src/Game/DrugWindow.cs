@@ -339,7 +339,7 @@ namespace ZaohuaAutoCraft
                     Need = target.Select((v, d) => v - bonus.Attrs[d]).ToArray(),
                     Yang = new Grid(furnace.yangGridSize.x, furnace.yangGridSize.y),
                     Yin = new Grid(furnace.yinGridSize.x, furnace.yinGridSize.y),
-                    TimeLimitMs = Plugin.TimeLimitMs.Value,
+                    TimeLimitMs = Plugin.DefaultMode.Value == DrugMode.MaxCount || Plugin.DefaultMode.Value == DrugMode.MaxQuality ? Plugin.PlacementTimeLimitMs.Value : Plugin.TimeLimitMs.Value,
                     Mode = Plugin.DefaultMode.Value,
                     States = Game.DrugBridge.GetStates(selected.Cfg, bonus),
                     BaseCount = bonus.Count + selected.Cfg.count,
@@ -349,7 +349,7 @@ namespace ZaohuaAutoCraft
                 result = null;
                 chosen = 0;
                 lastTopUp = topUp;
-                status = $"计算中…（候选材料 {request.Materials.Count} 种，需凑 {Game.DrugBridge.AttrText(request.Need)}）";
+                status = $"计算中…约 {request.TimeLimitMs / 1000.0:0.#} 秒（候选材料 {request.Materials.Count} 种，需凑 {Game.DrugBridge.AttrText(request.Need)}）";
                 var req = request;
                 running = Task.Run(() => new DrugSolver(req).Solve());
             }
