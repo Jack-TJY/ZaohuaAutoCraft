@@ -286,7 +286,18 @@ namespace ZaohuaAutoCraft.Solver
 
         public (int count, int quality) Evaluate(Board b, int baseCount, int baseQuality)
         {
+            return Evaluate(b, baseCount, baseQuality, out _, out _);
+        }
+
+        /// <summary>
+        /// progressCount / progressQuality：加丹数、加品质的规则离下一档还差多少的「进度」（满足条件的个数之和，
+        /// 阈值类规则封顶在阈值）。摆位搜索用它打破平局：例如「每 3 个火系 +1」放第 1、2 个时分数不变，但进度在涨。
+        /// </summary>
+        public (int count, int quality) Evaluate(Board b, int baseCount, int baseQuality, out int progressCount, out int progressQuality)
+        {
             int count = baseCount, quality = baseQuality;
+            progressCount = 0;
+            progressQuality = 0;
             var e1 = new List<int>();
             var e2 = new List<int>();
             foreach (var r in rules)
@@ -334,12 +345,46 @@ namespace ZaohuaAutoCraft.Solver
                             }
                             break;
                         case 10:
-                        case 11:
-                        case 12:
                         case 13:
                         case 14:
                         case 15:
                         case 16:
+                        {
+                            // 相邻类关系：只看 c1 的固定邻格是否在 E2 里，不做 E1×E2 全配对
+                            var in2 = new bool[cells.Length];
+                            foreach (int c in e2)
+                            {
+                                in2[c] = true;
+                            }
+                            var pairs = new HashSet<long>();
+                            int rel = r.Cfg.Relation;
+                            foreach (int c1 in e1)
+                            {
+                                var (x1, y1) = CellPos(g, c1);
+                                for (int k = 0; k < 4; k++)
+                                {
+                                    int dx = k == 0 ? 1 : k == 1 ? -1 : 0, dy = k == 2 ? 1 : k == 3 ? -1 : 0;
+                                    bool want = rel == 10 || (rel == 13 && dx == -1) || (rel == 14 && dx == 1) || (rel == 15 && dy == 1) || (rel == 16 && dy == -1);
+                                    if (!want)
+                                    {
+                                        continue;
+                                    }
+                                    int x2 = x1 + dx, y2 = y1 + dy;
+                                    if (x2 < g.MinX || y2 < g.MinY || x2 >= g.MinX + g.Width || y2 >= g.MinY + g.Height)
+                                    {
+                                        continue;
+                                    }
+                                    int c2 = CellIndex(g, x2, y2);
+                                    if (in2[c2] && (st == 0 || pairs.Add(((long)(cells[c1] + 1) << 32) | (uint)(cells[c2] + 1))))
+                                    {
+                                        n8++;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                        case 11:
+                        case 12:
                         {
                             var pairs = new HashSet<long>();
                             foreach (int c1 in e1)
@@ -414,6 +459,18 @@ namespace ZaohuaAutoCraft.Solver
                         case 3: mul = num < r.CalcValue ? 1 : 0; break;
                         case 4: mul = num <= r.CalcValue ? 1 : 0; break;
                         case 5: mul = r.CalcValue == 0 ? 0 : num / r.CalcValue; break;
+                    }
+                }
+                if (r.EffValue > 0 && (r.CalcOp == 1 || r.CalcOp == 2 || r.CalcOp == 5))
+                {
+                    int prog = r.CalcOp == 5 ? num : Math.Min(num, r.CalcValue + (r.CalcOp == 1 ? 1 : 0));
+                    if (r.EffType == 1)
+                    {
+                        progressCount += Math.Max(0, prog);
+                    }
+                    else if (r.EffType == 4)
+                    {
+                        progressQuality += Math.Max(0, prog);
                     }
                 }
                 if (r.EffType == 1)

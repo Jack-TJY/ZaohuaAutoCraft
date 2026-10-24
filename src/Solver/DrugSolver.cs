@@ -1251,15 +1251,64 @@ namespace ZaohuaAutoCraft.Solver
             }
             // 前几名再多调一会儿
             var top = scored.OrderByDescending(s => s.score).ThenBy(s => s.sol.PieceCount).Take(req.TopK).ToList();
-            long per = Math.Max(30, (req.TimeLimitMs + 400 - clock.ElapsedMilliseconds) / Math.Max(1, top.Count));
             var result = new List<(Solution sol, long score)>();
             int seed = 7;
-            foreach (var t in top)
+            var pairs = PadPairs(mode);
+            for (int ti = 0; ti < top.Count; ti++)
             {
-                long s = Optimize(t.sol, Math.Min(clock.ElapsedMilliseconds + per, req.TimeLimitMs + 400), mode, seed++);
+                var t = top[ti];
+                // 第一名拿大头时间（垫料越多越慢），其余各分一点
+                long left = req.TimeLimitMs + 400 - clock.ElapsedMilliseconds;
+                long share = ti == 0 && top.Count > 1 ? left * 6 / 10 : left / Math.Max(1, top.Count - ti);
+                long until = Math.Min(clock.ElapsedMilliseconds + Math.Max(30, share), req.TimeLimitMs + 400);
+                long s = pairs.Count > 0 ? Pad(t.sol, pairs, until, mode, seed++) : Optimize(t.sol, until, mode, seed++);
                 result.Add((t.sol, s));
             }
             return result.OrderByDescending(r => r.score).ThenBy(r => r.sol.PieceCount).Select(r => r.sol).ToList();
+        }
+
+        /// <summary>
+        /// 垫料候选：阳格放 A、阴格放 B，A 与 B 属性完全相同，放上去属性净变化为 0，只为多满足药性规则。
+        /// 只留材料本身符合规则目标的（例如通法丹的火系、金系灵草）。
+        /// </summary>
+        List<(Material yang, Material yin)> PadPairs(DrugMode mode)
+        {
+            bool forQuality = mode == DrugMode.MaxQuality;
+            var mats = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && m.Attrs.Any(v => v != 0)).ToList();
+            var list = new List<(Material, Material, int)>();
+            foreach (var g in mats.GroupBy(m => string.Join(",", m.Attrs)))
+            {
+                var yang = g.Where(m => req.Yang != null && Packer.CanFit(req.Yang, m.Shape)).ToList();
+                var yin = g.Where(m => req.Yin != null && Packer.CanFit(req.Yin, m.Shape)).ToList();
+                foreach (var a in yang)
+                {
+                    foreach (var b in yin)
+                    {
+                        if (a == b && a.Stock < 2)
+                        {
+                            continue;
+                        }
+                        int aff = eval.Affinity(a, forQuality) + eval.Affinity(b, forQuality);
+                        if (aff > 0)
+                        {
+                            list.Add((a, b, aff * 100 - a.Shape.Count - b.Shape.Count));
+                        }
+                    }
+                }
+            }
+            return list.OrderByDescending(x => x.Item3).Take(12).Select(x => (x.Item1, x.Item2)).ToList();
+        }
+
+        long Pad(Solution sol, List<(Material yang, Material yin)> pairs, long until, DrugMode mode, int seed)
+        {
+            var remaining = req.Materials.ToDictionary(m => m, m => m.Stock);
+            foreach (var p in sol.Placements)
+            {
+                remaining[p.Material]--;
+            }
+            var opt = new LayoutOptimizer(eval, req.Yang, req.Yin, req.BaseCount, req.BaseQuality, (c, q) => Objective(mode, c, q));
+            var (cnt, qual) = opt.Pad(sol, pairs, remaining, clock, until, seed);
+            return Objective(mode, cnt, qual);
         }
 
         long Objective(DrugMode mode, int count, int quality)
