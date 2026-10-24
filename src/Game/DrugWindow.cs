@@ -253,6 +253,7 @@ namespace ZaohuaAutoCraft
             {
                 Plugin.DefaultMode.Value = (DrugMode)newMode;
             }
+            DrawTimeLimit((DrugMode)newMode);
 
             if (selected != null)
             {
@@ -321,6 +322,31 @@ namespace ZaohuaAutoCraft
 
         Solution applied;
 
+        static bool UsesPlacementTime(DrugMode m) => m == DrugMode.MaxCount || m == DrugMode.MaxQuality;
+
+        /// <summary>当前模式的最长计算时间，可在窗口里直接调（同时写回配置文件）。</summary>
+        void DrawTimeLimit(DrugMode m)
+        {
+            var entry = UsesPlacementTime(m) ? Plugin.PlacementTimeLimitMs : Plugin.TimeLimitMs;
+            int sec = Mathf.Max(1, entry.Value / 1000);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label($"最长计算时间：{sec} 秒", GUILayout.Width(150));
+            GUI.enabled = running == null;
+            if (GUILayout.Button("−", GUILayout.Width(28)) && sec > 1)
+            {
+                entry.Value = (sec - 1) * 1000;
+            }
+            if (GUILayout.Button("+", GUILayout.Width(28)) && sec < 120)
+            {
+                entry.Value = (sec + 1) * 1000;
+            }
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            GUILayout.Label(UsesPlacementTime(m)
+                ? "时间越长，越能多试垫料和摆位，丹数/品质越高；计算期间游戏不卡，但要等这么久。"
+                : "一般 1 秒内就能算完，只有材料很多或丹炉很小时才会用满；用满仍无解可调大再试。");
+        }
+
         void StartSolve(bool topUp)
         {
             try
@@ -339,7 +365,9 @@ namespace ZaohuaAutoCraft
                     Need = target.Select((v, d) => v - bonus.Attrs[d]).ToArray(),
                     Yang = new Grid(furnace.yangGridSize.x, furnace.yangGridSize.y),
                     Yin = new Grid(furnace.yinGridSize.x, furnace.yinGridSize.y),
-                    TimeLimitMs = Plugin.DefaultMode.Value == DrugMode.MaxCount || Plugin.DefaultMode.Value == DrugMode.MaxQuality ? Plugin.PlacementTimeLimitMs.Value : Plugin.TimeLimitMs.Value,
+                    TimeLimitMs = UsesPlacementTime(Plugin.DefaultMode.Value) ? Plugin.PlacementTimeLimitMs.Value : Plugin.TimeLimitMs.Value,
+                    // 最多成丹的次优方案丹数差很多，没有比较意义，只给一个并把时间全给它
+                    TopK = Plugin.DefaultMode.Value == DrugMode.MaxCount ? 1 : 3,
                     Mode = Plugin.DefaultMode.Value,
                     States = Game.DrugBridge.GetStates(selected.Cfg, bonus),
                     BaseCount = bonus.Count + selected.Cfg.count,
