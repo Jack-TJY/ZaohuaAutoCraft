@@ -205,7 +205,7 @@ namespace ZaohuaAutoCraft
             GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})");
         }
 
-        static readonly string[] ModeNames = { "最少材料", "低阶优先", "最多成丹", "最高品质", "最多可炼次数" };
+        static readonly string[] ModeNames = { "最少材料", "最低品阶", "最多成丹", "最高品质", "最多可炼次数" };
 
         int chosen;
 
@@ -282,7 +282,7 @@ namespace ZaohuaAutoCraft
                 for (int i = 0; i < result.Solutions.Count; i++)
                 {
                     var s = result.Solutions[i];
-                    string head = $"方案{i + 1}：{s.PieceCount} 件  成丹 {s.Count}  品质 {s.Quality}" + (lastTopUp ? $"  补料约 {s.BuyCost} 灵石" : $"  可炼 {s.Batches} 次") + $"  最高品阶 {s.MaxGrade}";
+                    string head = $"方案{i + 1}：{s.PieceCount}件 成丹{s.Count} 品质{s.Quality}" + (lastTopUp ? $" 补料约{s.BuyCost}灵石" : $" 可炼{s.Batches}次 最高{s.MaxGrade}阶 价值{s.Price}灵石");
                     if (GUILayout.Toggle(chosen == i, head) && chosen != i)
                     {
                         chosen = i;

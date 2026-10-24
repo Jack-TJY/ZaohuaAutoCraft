@@ -65,7 +65,7 @@ Material Copy(Material m, long stock) => new Material { Id = m.Id, Name = m.Name
 void Run(string label, Func<JsonElement, List<Material>> stockOf, Grid yang, Grid yin, int timeLimit, DrugMode mode = DrugMode.MinPieces, bool topUp = false)
 {
     int ok = 0, noFit = 0, none = 0, timeout = 0;
-    long maxMs = 0, totalMs = 0, sumCount = 0, sumQuality = 0, sumBatches = 0, sumPieces = 0, sumCost = 0;
+    long maxMs = 0, totalMs = 0, sumCount = 0, sumQuality = 0, sumBatches = 0, sumPieces = 0, sumCost = 0, sumPrice = 0;
     string slowest = "";
     foreach (var r in recipes)
     {
@@ -108,13 +108,14 @@ void Run(string label, Func<JsonElement, List<Material>> stockOf, Grid yang, Gri
             sumBatches += res.Best.Batches;
             sumPieces += res.Best.PieceCount;
             sumCost += res.Best.BuyCost;
+            sumPrice += res.Best.Price;
         }
         else if (res.TimedOut) { timeout++; if (Environment.GetEnvironmentVariable("VERBOSE") != null) Console.WriteLine($"  超时 {r.GetProperty("id")}: {r.GetProperty("attrLimiteStr")} 组合 {res.CombosTried}"); }
         else if (res.FoundComboButNoFit) noFit++;
         else none++;
     }
     double n = Math.Max(1, ok);
-    Console.WriteLine($"[{label}] 成功 {ok} / 装不下 {noFit} / 无解 {none} / 超时 {timeout}；平均 {totalMs / recipes.Count} ms，最慢 {maxMs} ms（丹方 {slowest}）；均件数 {sumPieces / n:F2} 均丹数 {sumCount / n:F2} 均品质 {sumQuality / n:F2} 均批数 {sumBatches / n:F1}" + (topUp ? $" 均补料花费 {sumCost / n:F0}" : ""));
+    Console.WriteLine($"[{label}] 成功 {ok} / 装不下 {noFit} / 无解 {none} / 超时 {timeout}；平均 {totalMs / recipes.Count} ms，最慢 {maxMs} ms（丹方 {slowest}）；均件数 {sumPieces / n:F2} 均丹数 {sumCount / n:F2} 均品质 {sumQuality / n:F2} 均批数 {sumBatches / n:F1} 均价值 {sumPrice / n:F0}" + (topUp ? $" 均补料花费 {sumCost / n:F0}" : ""));
 }
 
 rid = Environment.GetEnvironmentVariable("RECIPE");
