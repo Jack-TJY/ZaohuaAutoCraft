@@ -24,10 +24,6 @@ namespace ZaohuaAutoCraft
 
         internal static ConfigEntry<Solver.DrugMode> DefaultMode;
 
-        internal static ConfigEntry<KeyboardShortcut> EquipmentToggleKey;
-
-        internal static ConfigEntry<int> EquipmentButtonX, EquipmentButtonY;
-
         internal static ConfigEntry<int> EquipmentTimeLimitMs;
 
         internal static ConfigEntry<Solver.EquipmentMode> EquipmentMode;
@@ -43,9 +39,6 @@ namespace ZaohuaAutoCraft
             ButtonX = Config.Bind("通用", "ButtonX", -1, "「自动摆放」按钮的位置（像素，左上角为原点）；在游戏里按住按钮拖动会自动改这里，-1 = 默认位置");
             ButtonY = Config.Bind("通用", "ButtonY", -1, "同上，纵坐标");
             DefaultMode = Config.Bind("炼丹", "Mode", Solver.DrugMode.MinPieces, "默认模式：MinPieces 最少材料 / LowGrade 最低品阶（先让用到的最高品阶最低，再比品阶总和，最后比灵石价值） / MaxCount 最多成丹 / MaxQuality 最高品质 / MaxBatches 最多可炼次数（窗口里切换会自动记住）");
-            EquipmentToggleKey = Config.Bind("通用", "EquipmentOpenKey", new KeyboardShortcut(KeyCode.F10), "打开/关闭炼器自动摆放窗口（炼丹用 F9；不要设成 F5/F8，那是游戏的快速存读档）");
-            EquipmentButtonX = Config.Bind("通用", "EquipmentButtonX", -1, "「自动炼器」按钮的位置（像素，左上角为原点）；游戏里拖动会自动改，-1 = 默认位置");
-            EquipmentButtonY = Config.Bind("通用", "EquipmentButtonY", -1, "同上，纵坐标");
             EquipmentTimeLimitMs = Config.Bind("炼器", "EquipmentTimeLimitMs", 3000, "炼器最长计算时间（毫秒）。一般 1 秒内算完，只有材料很多或锻造锤很小时才会用满");
             EquipmentMode = Config.Bind("炼器", "EquipmentMode", Solver.EquipmentMode.MinPieces, "默认模式：MaxActiveRunes 满足最多符文 / MaxRuneLevel 指定符文满级 / MinPieces 最少材料 / LowGrade 低阶优先 / MaxGrade 最高品阶 / MaxAttr 指定属性最大");
             new Harmony("zaohua.autocraft").PatchAll();
@@ -54,7 +47,7 @@ namespace ZaohuaAutoCraft
             go.hideFlags = HideFlags.HideAndDontSave;
             DontDestroyOnLoad(go);
             go.AddComponent<Runner>();
-            Log.LogInfo("自动炼丹炼器已加载：炼丹界面快捷键 " + ToggleKey.Value + "，炼器界面快捷键 " + EquipmentToggleKey.Value);
+            Log.LogInfo("自动炼丹炼器已加载：炼丹/炼器界面通用「自动摆放」按钮，快捷键 " + ToggleKey.Value);
         }
     }
 

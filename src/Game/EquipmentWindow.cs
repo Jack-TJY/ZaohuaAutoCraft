@@ -54,7 +54,7 @@ namespace ZaohuaAutoCraft
                 MouseOver = false;
                 return;
             }
-            if (Plugin.EquipmentToggleKey.Value.IsDown())
+            if (Plugin.ToggleKey.Value.IsDown())
             {
                 if (visible)
                 {
@@ -145,8 +145,8 @@ namespace ZaohuaAutoCraft
 
         Rect ButtonRect()
         {
-            float x = dragged ? dragPos.x : Plugin.EquipmentButtonX.Value < 0 ? Screen.width - 190 : Plugin.EquipmentButtonX.Value;
-            float y = dragged ? dragPos.y : Plugin.EquipmentButtonY.Value < 0 ? 130 : Plugin.EquipmentButtonY.Value;
+            float x = dragged ? dragPos.x : Plugin.ButtonX.Value < 0 ? Screen.width - 190 : Plugin.ButtonX.Value;
+            float y = dragged ? dragPos.y : Plugin.ButtonY.Value < 0 ? 90 : Plugin.ButtonY.Value;
             return new Rect(Mathf.Clamp(x, 0, Screen.width - 170), Mathf.Clamp(y, 0, Screen.height - 30), 170, 30);
         }
 
@@ -181,8 +181,8 @@ namespace ZaohuaAutoCraft
                 {
                     var p = ButtonRect().position;
                     dragged = false;
-                    Plugin.EquipmentButtonX.Value = Mathf.RoundToInt(p.x);
-                    Plugin.EquipmentButtonY.Value = Mathf.RoundToInt(p.y);
+                    Plugin.ButtonX.Value = Mathf.RoundToInt(p.x);
+                    Plugin.ButtonY.Value = Mathf.RoundToInt(p.y);
                 }
                 else
                 {
@@ -197,7 +197,7 @@ namespace ZaohuaAutoCraft
                 }
                 e.Use();
             }
-            GUI.Button(ButtonRect(), (visible ? "关闭炼器" : "自动炼器") + $" ({Plugin.EquipmentToggleKey.Value})");
+            GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})");
         }
 
         static readonly string[] ModeNames = { "满足最多符文", "指定符文满级", "最少材料", "低阶优先", "最高品阶", "指定属性最大" };
