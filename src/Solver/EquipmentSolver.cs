@@ -44,6 +44,8 @@ namespace ZaohuaAutoCraft.Solver
 
         readonly int[] maxPos = new int[Attr.Count];
 
+        readonly long[] maxReachable = new long[Attr.Count];
+
         int[] twin;
 
         long[] caps;
@@ -81,7 +83,6 @@ namespace ZaohuaAutoCraft.Solver
             deadline = req.TimeLimitMs;
             var result = new EquipmentSolveResult();
             eval = new RuneEvaluator(req.Runes, req.Bonus);
-            BuildUnits();
             if (req.Runes.Count == 0)
             {
                 result.Message = "没有选择符文";
@@ -91,13 +92,27 @@ namespace ZaohuaAutoCraft.Solver
             switch (req.Mode)
             {
                 case EquipmentMode.MinPieces:
+                    BuildUnits();
                     sols = SolveCover(TargetOf(req.Runes, _ => 1));
                     break;
                 case EquipmentMode.MaxActiveRunes:
+                    BuildUnits();
                     sols = SolveMaxActive();
                     break;
+                case EquipmentMode.MaxRuneLevel:
+                    BuildUnits();
+                    sols = SolveCover(MaxLevelTarget());
+                    break;
+                case EquipmentMode.LowGrade:
+                    sols = SolveLowGrade();
+                    break;
+                case EquipmentMode.MaxGrade:
+                case EquipmentMode.MaxAttr:
+                    BuildUnits();
+                    sols = SolveGreedy(req.Mode);
+                    break;
                 default:
-                    result.Message = "该模式在阶段 3c 实现";
+                    result.Message = "未知模式";
                     return Finish(result);
             }
             foreach (var s in sols)
@@ -149,16 +164,25 @@ namespace ZaohuaAutoCraft.Solver
             return id;
         }
 
-        void BuildUnits()
+        void BuildUnits(int gradeCap = int.MaxValue)
         {
             var mats = req.Materials;
+            units.Clear();
+            typeShapes.Clear();
+            typeIds.Clear();
+            packCache.Clear();
+            Array.Clear(maxReachable, 0, maxReachable.Length);
             var byKey = new Dictionary<string, Unit>();
             for (int i = 0; i < mats.Count; i++)
             {
                 var m = mats[i];
-                if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0) || m.Grade > gradeCap)
                 {
                     continue;
+                }
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    maxReachable[d] += (long)Math.Abs(m.Attrs[d]) * m.Stock;
                 }
                 int type = TypeOf(m.Shape);
                 foreach (Side side in new[] { Side.Yang, Side.Yin })
@@ -204,6 +228,7 @@ namespace ZaohuaAutoCraft.Solver
                 }
             }
             minSize = n == 0 ? 1 : units.Min(u => u.Size);
+            Array.Clear(maxPos, 0, maxPos.Length);
             for (int d = 0; d < Attr.Count; d++)
             {
                 posUnitsByDim[d] = new List<int>();
@@ -413,6 +438,14 @@ namespace ZaohuaAutoCraft.Solver
         List<EquipmentSolution> SolveCover(int[] target)
         {
             var need = NeedOf(target);
+            // 快速判无解：即使把所有可用材料都用上（每件取对第 d 维最有利的一侧）也到不了目标
+            for (int d = 0; d < Attr.Count; d++)
+            {
+                if (need[d] > 0 && maxReachable[d] < need[d])
+                {
+                    return new List<EquipmentSolution>();
+                }
+            }
             if (need.All(v => v == 0))
             {
                 // 炉/天赋加成已满足，无需材料
@@ -524,6 +557,197 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     packCache[key] = packed.Ok;
                 }
+                if (!packed.Ok)
+                {
+                    return null;
+                }
+                for (int i = 0; i < pieces.Count; i++)
+                {
+                    var s = packed.Spots[i];
+                    sol.Placements.Add(new Placement { Material = pieces[i], Side = side, X = s.x, Y = s.y, Rotate = s.rotate });
+                }
+            }
+            return sol;
+        }
+
+        // ───────────────────────── 其余模式（阶段 3c） ─────────────────────────
+
+        /// <summary>指定符文满级：目标 = 每符文 targetLevel（默认 maxStacks）对应的要求上限。</summary>
+        int[] MaxLevelTarget()
+        {
+            var t = new int[Attr.Count];
+            for (int i = 0; i < req.Runes.Count; i++)
+            {
+                int lv = req.TargetLevel != null && i < req.TargetLevel.Length ? Math.Max(1, req.TargetLevel[i]) : req.Runes[i].MaxStacks;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (req.Runes[i].Requirement[d] > 0)
+                    {
+                        t[d] = Math.Max(t[d], req.Runes[i].Requirement[d] * lv);
+                    }
+                }
+            }
+            return t;
+        }
+
+        /// <summary>低阶优先：材料品阶上限从低往高试，第一个能覆盖目标的门槛即解。</summary>
+        List<EquipmentSolution> SolveLowGrade()
+        {
+            var grades = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && m.Attrs.Any(v => v != 0)).Select(m => m.Grade).Distinct().OrderBy(g => g).ToList();
+            var target = TargetOf(req.Runes, _ => 1);
+            for (int i = 0; i < grades.Count; i++)
+            {
+                int g = grades[i];
+                anyNoFit = false;
+                timedOut = false;
+                // 时间切片：每档分到均等时间，最后一档用剩余全部
+                long remain = deadline - clock.ElapsedMilliseconds;
+                long until = i == grades.Count - 1 ? deadline : clock.ElapsedMilliseconds + Math.Max(50, remain / (grades.Count - i));
+                long saved = deadline;
+                deadline = until;
+                BuildUnits(g);
+                var sols = SolveCover(target);
+                deadline = saved;
+                if (sols.Count > 0)
+                {
+                    return sols;
+                }
+                if (clock.ElapsedMilliseconds > deadline)
+                {
+                    break;
+                }
+            }
+            return new List<EquipmentSolution>();
+        }
+
+        /// <summary>最高品阶 / 指定属性最大：贪心按「每格收益」选材料，选满后装箱，装不下就丢最低收益的再试。</summary>
+        List<EquipmentSolution> SolveGreedy(EquipmentMode mode)
+        {
+            // 基座：最高品阶先要一个「全符文至少 1 级」的最少材料解，再往上加料冲等级；
+            // 指定属性最大从空开始（只要对目标属性有正贡献的材料）。
+            var baseItems = new List<(Material mat, Side side)>();
+            var attrs = (int[])req.Bonus.Clone();
+            if (mode == EquipmentMode.MaxGrade)
+            {
+                var baseSols = SolveCover(TargetOf(req.Runes, _ => 1));
+                if (baseSols.Count == 0)
+                {
+                    return baseSols;
+                }
+                foreach (var p in baseSols[0].Placements)
+                {
+                    baseItems.Add((p.Material, p.Side));
+                    int sgn = p.Side == Side.Yang ? 1 : -1;
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        attrs[d] += sgn * p.Material.Attrs[d];
+                    }
+                }
+            }
+            var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
+            foreach (var it in baseItems)
+            {
+                stockLeft[it.mat]--;
+            }
+            var area = new int[3];
+            foreach (var it in baseItems)
+            {
+                area[(int)it.side] += it.mat.Shape.Count;
+            }
+
+            var additions = new List<(Material mat, Side side, double gain)>();
+            int targetAttr = mode == EquipmentMode.MaxAttr ? Math.Max(0, req.TargetAttr) : 0;
+            while (clock.ElapsedMilliseconds < deadline)
+            {
+                double baseScore = mode == EquipmentMode.MaxGrade ? eval.Evaluate(attrs).GradeScore : 0;
+                double bestGain = 0;
+                Material bestMat = null;
+                Side bestSide = Side.Yang;
+                foreach (var m in req.Materials)
+                {
+                    if (stockLeft[m] <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                    {
+                        continue;
+                    }
+                    foreach (Side side in new[] { Side.Yang, Side.Yin })
+                    {
+                        var grid = side == Side.Yang ? req.Yang : req.Yin;
+                        if (grid == null || !Packer.CanFit(grid, m.Shape) || area[(int)side] + m.Shape.Count > grid.Area)
+                        {
+                            continue;
+                        }
+                        int sgn = side == Side.Yang ? 1 : -1;
+                        double gain;
+                        if (mode == EquipmentMode.MaxAttr)
+                        {
+                            gain = sgn * m.Attrs[targetAttr];
+                        }
+                        else
+                        {
+                            var na = (int[])attrs.Clone();
+                            for (int d = 0; d < Attr.Count; d++)
+                            {
+                                na[d] += sgn * m.Attrs[d];
+                            }
+                            gain = eval.Evaluate(na).GradeScore - baseScore;
+                        }
+                        if (gain > bestGain)
+                        {
+                            bestGain = gain;
+                            bestMat = m;
+                            bestSide = side;
+                        }
+                    }
+                }
+                if (bestMat == null || bestGain <= 0)
+                {
+                    break;
+                }
+                additions.Add((bestMat, bestSide, bestGain));
+                stockLeft[bestMat]--;
+                area[(int)bestSide] += bestMat.Shape.Count;
+                int s = bestSide == Side.Yang ? 1 : -1;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    attrs[d] += s * bestMat.Attrs[d];
+                }
+            }
+
+            // 装箱：基座 + 按收益降序逐个试加增量，装不下的放弃
+            var finalItems = new List<(Material mat, Side side)>(baseItems);
+            foreach (var a in additions.OrderByDescending(a => a.gain))
+            {
+                finalItems.Add((a.mat, a.side));
+                if (PackItems(finalItems) == null)
+                {
+                    finalItems.RemoveAt(finalItems.Count - 1);
+                }
+            }
+            var packed = PackItems(finalItems);
+            var result = new List<EquipmentSolution>();
+            if (packed != null)
+            {
+                result.Add(packed);
+            }
+            else
+            {
+                anyNoFit = true;
+            }
+            return result;
+        }
+
+        EquipmentSolution PackItems(List<(Material mat, Side side)> items)
+        {
+            var sol = new EquipmentSolution();
+            foreach (Side side in new[] { Side.Yang, Side.Yin })
+            {
+                var pieces = items.Where(x => x.side == side).Select(x => x.mat).ToList();
+                if (pieces.Count == 0)
+                {
+                    continue;
+                }
+                var grid = side == Side.Yang ? req.Yang : req.Yin;
+                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, (int)Math.Max(deadline, clock.ElapsedMilliseconds + 200));
                 if (!packed.Ok)
                 {
                     return null;

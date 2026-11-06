@@ -181,8 +181,8 @@ void Run(string label, Func<JsonElement, List<Material>> stockOf, Grid yang, Gri
     Console.WriteLine($"[{label}] 成功 {ok} / 装不下 {noFit} / 无解 {none} / 超时 {timeout}；平均 {totalMs / recipes.Count} ms，最慢 {maxMs} ms（丹方 {slowest}）；均件数 {sumPieces / n:F2} 均丹数 {sumCount / n:F2} 均品质 {sumQuality / n:F2} 均批数 {sumBatches / n:F1} 均价值 {sumPrice / n:F0}" + (topUp ? $" 均补料花费 {sumCost / n:F0}" : ""));
 }
 
-// 炼器离线测试：给定库存规则，逐个符文验证「能激活 + 复核通过」
-void RunEquip(string label, Func<Material, long> stockOf, Grid yang, Grid yin, EquipmentMode mode, int timeLimit)
+// 炼器离线测试：给定库存规则，逐个符文验证求解结果与复核
+void RunEquip(string label, Func<Material, long> stockOf, Grid yang, Grid yin, EquipmentMode mode, int timeLimit, int targetAttr = -1, bool requireActive = true)
 {
     int ok = 0, none = 0, noFit = 0, timeout = 0;
     long maxMs = 0, totalMs = 0;
@@ -190,7 +190,7 @@ void RunEquip(string label, Func<Material, long> stockOf, Grid yang, Grid yin, E
     foreach (var r in allRunes)
     {
         var m2 = mats.Select(m => Copy(m, stockOf(m))).ToList();
-        var req = new EquipmentRequest { Materials = m2, Runes = new List<Rune> { r }, Yang = yang, Yin = yin, Mode = mode, TimeLimitMs = timeLimit, TopK = 1 };
+        var req = new EquipmentRequest { Materials = m2, Runes = new List<Rune> { r }, Yang = yang, Yin = yin, Mode = mode, TimeLimitMs = timeLimit, TopK = 1, TargetAttr = targetAttr };
         var res = new EquipmentSolver(req).Solve();
         totalMs += res.ElapsedMs;
         if (res.ElapsedMs > maxMs) { maxMs = res.ElapsedMs; slowest = r.Id; }
@@ -198,7 +198,7 @@ void RunEquip(string label, Func<Material, long> stockOf, Grid yang, Grid yin, E
         {
             string err = EquipmentSolver.Verify(req, res.Best);
             if (err != null) { failures++; Console.WriteLine($"  !! 符文 {r.Id} 复核失败: {err}"); }
-            else if (res.Best.Runes.ActiveCount < 1) { failures++; Console.WriteLine($"  !! 符文 {r.Id} 未激活 等级[{string.Join(",", res.Best.Runes.Level)}]"); }
+            else if (requireActive && res.Best.Runes.ActiveCount < 1) { failures++; Console.WriteLine($"  !! 符文 {r.Id} 未激活 等级[{string.Join(",", res.Best.Runes.Level)}]"); }
             else ok++;
         }
         else if (res.TimedOut) { timeout++; if (Environment.GetEnvironmentVariable("VERBOSE") != null) Console.WriteLine($"  超时 符文 {r.Id} 组合 {res.CombosTried}"); }
@@ -295,6 +295,10 @@ if (Want("equip"))
 {
     RunEquip("全材料·大锤·最少材料", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MinPieces, 2000);
     RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
+    RunEquip("全材料·大锤·指定符文满级", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
+    RunEquip("全材料·大锤·低阶优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
+    RunEquip("全材料·大锤·最高品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxGrade, 2000, requireActive: false);
+    RunEquip("全材料·大锤·指定属性最大(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 2000, targetAttr: 0, requireActive: false);
     // 多符文·满足最多符文
     var multiRunes = allRunes.Take(5).ToList();
     var multi = new EquipmentRequest { Materials = all, Runes = multiRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxActiveRunes, TimeLimitMs = 3000, TopK = 1 };
