@@ -784,7 +784,81 @@ namespace ZaohuaAutoCraft.Solver
             return (best, bestSide);
         }
 
-        /// <summary>最大属性专用提级：先满足「目标属性最大」，再逐级提等级；每提一级重新确认目标属性仍最大，否则补目标材料，补不了就回退换符文。</summary>
+        /// <summary>由材料+侧列表算属性总值（含炉加成）。</summary>
+        int[] AttrsOf(List<(Material mat, Side side)> items)
+        {
+            var attrs = (int[])req.Bonus.Clone();
+            foreach (var it in items)
+            {
+                int sgn = it.side == Side.Yang ? 1 : -1;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    attrs[d] += sgn * it.mat.Attrs[d];
+                }
+            }
+            return attrs;
+        }
+
+        /// <summary>最大属性提级一步：先满足「目标属性最大」，再逐级提等级；每提一级确认目标仍最大，否则补目标材料，补不了则回退。返回是否推进。</summary>
+        bool StepMaxAttr(List<(Material mat, Side side)> items, Dictionary<Material, long> stockLeft, int[] area, ref int[] attrs, int ta)
+        {
+            var cur = eval.Evaluate(attrs);
+            if (RuneEvaluator.ItemAttrOf(attrs) != ta)
+            {
+                var t = FindTargetMat(ta, attrs, stockLeft, area);
+                if (t.mat != null)
+                {
+                    items.Add((t.mat, t.side));
+                    stockLeft[t.mat]--;
+                    area[(int)t.side] += t.mat.Shape.Count;
+                    attrs = AddTo(attrs, t.mat, t.side);
+                    return true;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < req.Runes.Count; i++)
+                {
+                    if (cur.Level[i] >= req.Runes[i].MaxStacks)
+                    {
+                        continue;
+                    }
+                    var r = FindRaiseMat(i, attrs, stockLeft, area);
+                    if (r.mat == null)
+                    {
+                        continue;
+                    }
+                    var na = AddTo(attrs, r.mat, r.side);
+                    if (RuneEvaluator.ItemAttrOf(na) == ta)
+                    {
+                        items.Add((r.mat, r.side));
+                        stockLeft[r.mat]--;
+                        area[(int)r.side] += r.mat.Shape.Count;
+                        attrs = na;
+                        return true;
+                    }
+                    var stockCopy = new Dictionary<Material, long>(stockLeft);
+                    stockCopy[r.mat]--;
+                    var areaCopy = (int[])area.Clone();
+                    areaCopy[(int)r.side] += r.mat.Shape.Count;
+                    var c = FindTargetMat(ta, na, stockCopy, areaCopy);
+                    if (c.mat != null)
+                    {
+                        items.Add((r.mat, r.side));
+                        stockLeft[r.mat]--;
+                        area[(int)r.side] += r.mat.Shape.Count;
+                        items.Add((c.mat, c.side));
+                        stockLeft[c.mat]--;
+                        area[(int)c.side] += c.mat.Shape.Count;
+                        attrs = AddTo(AddTo(attrs, r.mat, r.side), c.mat, c.side);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>最大属性专用提级 + 结果复查。</summary>
         List<EquipmentSolution> RaiseMaxAttr(EquipmentSolution baseSol)
         {
             int ta = Math.Max(0, req.TargetAttr);
@@ -812,71 +886,64 @@ namespace ZaohuaAutoCraft.Solver
             }
             Record(); // 基座本身总是有效解
 
-            while (clock.ElapsedMilliseconds < deadline)
+            while (clock.ElapsedMilliseconds < deadline && StepMaxAttr(items, stockLeft, area, ref attrs, ta))
             {
-                bool progressed = false;
-                var cur = eval.Evaluate(attrs);
-                if (RuneEvaluator.ItemAttrOf(attrs) != ta)
-                {
-                    var t = FindTargetMat(ta, attrs, stockLeft, area);
-                    if (t.mat != null)
-                    {
-                        items.Add((t.mat, t.side));
-                        stockLeft[t.mat]--;
-                        area[(int)t.side] += t.mat.Shape.Count;
-                        attrs = AddTo(attrs, t.mat, t.side);
-                        progressed = true;
-                    }
-                }
-                else
-                {
-                    for (int i = 0; i < req.Runes.Count; i++)
-                    {
-                        if (cur.Level[i] >= req.Runes[i].MaxStacks)
-                        {
-                            continue;
-                        }
-                        var r = FindRaiseMat(i, attrs, stockLeft, area);
-                        if (r.mat == null)
-                        {
-                            continue;
-                        }
-                        var na = AddTo(attrs, r.mat, r.side);
-                        if (RuneEvaluator.ItemAttrOf(na) == ta)
-                        {
-                            items.Add((r.mat, r.side));
-                            stockLeft[r.mat]--;
-                            area[(int)r.side] += r.mat.Shape.Count;
-                            attrs = na;
-                            progressed = true;
-                            break;
-                        }
-                        var stockCopy = new Dictionary<Material, long>(stockLeft);
-                        stockCopy[r.mat]--;
-                        var areaCopy = (int[])area.Clone();
-                        areaCopy[(int)r.side] += r.mat.Shape.Count;
-                        var c = FindTargetMat(ta, na, stockCopy, areaCopy);
-                        if (c.mat != null)
-                        {
-                            items.Add((r.mat, r.side));
-                            stockLeft[r.mat]--;
-                            area[(int)r.side] += r.mat.Shape.Count;
-                            items.Add((c.mat, c.side));
-                            stockLeft[c.mat]--;
-                            area[(int)c.side] += c.mat.Shape.Count;
-                            attrs = AddTo(AddTo(attrs, r.mat, r.side), c.mat, c.side);
-                            progressed = true;
-                            break;
-                        }
-                    }
-                }
-                if (!progressed)
-                {
-                    break;
-                }
                 Record();
             }
+
+            // 结果复查：移除冗余材料（尤其多余的目标属性材料），再尝试继续提级
+            var rechecked = RecheckMaxAttr(items, ta);
+            if (rechecked != null)
+            {
+                results.Add(rechecked);
+            }
             return results;
+        }
+
+        /// <summary>复查：反向贪心移除冗余材料（不降低数量/等级、不破坏目标属性最大），再尝试继续提级。</summary>
+        EquipmentSolution RecheckMaxAttr(List<(Material mat, Side side)> items, int ta)
+        {
+            bool changed = true;
+            while (changed && clock.ElapsedMilliseconds < deadline)
+            {
+                changed = false;
+                var baseAttrs = AttrsOf(items);
+                var baseR = eval.Evaluate(baseAttrs);
+                bool targetWasOk = RuneEvaluator.ItemAttrOf(baseAttrs) == ta;
+                for (int i = items.Count - 1; i >= 0; i--)
+                {
+                    var tmp = new List<(Material mat, Side side)>(items);
+                    tmp.RemoveAt(i);
+                    if (PackItems(tmp) == null)
+                    {
+                        continue;
+                    }
+                    var na = AttrsOf(tmp);
+                    var nr = eval.Evaluate(na);
+                    bool targetOk = RuneEvaluator.ItemAttrOf(na) == ta;
+                    if (nr.ActiveCount >= baseR.ActiveCount && nr.TotalLevel >= baseR.TotalLevel && (targetOk || !targetWasOk))
+                    {
+                        items = tmp;
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
+            foreach (var it in items)
+            {
+                stockLeft[it.mat]--;
+            }
+            var area = new int[3];
+            foreach (var it in items)
+            {
+                area[(int)it.side] += it.mat.Shape.Count;
+            }
+            var attrs = AttrsOf(items);
+            while (clock.ElapsedMilliseconds < deadline && StepMaxAttr(items, stockLeft, area, ref attrs, ta))
+            {
+            }
+            return PackItems(items);
         }
 
         /// <summary>统一排序键（越大越好）：数量 > 等级 > 模式专属 > 件数。</summary>
@@ -889,7 +956,7 @@ namespace ZaohuaAutoCraft.Solver
                 case EquipmentMode.MinPieces:
                     return new IComparable[] { active, -s.PieceCount, level };
                 case EquipmentMode.LowGrade:
-                    return new IComparable[] { active, level, -s.MaxGrade, -s.GradeSum, -s.PieceCount };
+                    return new IComparable[] { active, level, -s.MaxGrade, -s.GradeSum, -s.Price, -s.PieceCount };
                 case EquipmentMode.MaxGrade:
                     return new IComparable[] { active, level, s.Runes.GradeScore, -s.PieceCount };
                 case EquipmentMode.MaxAttr:
