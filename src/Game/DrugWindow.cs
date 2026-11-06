@@ -457,7 +457,7 @@ namespace ZaohuaAutoCraft
     {
         private static bool Prefix()
         {
-            return !DrugWindow.MouseOver;
+            return !DrugWindow.MouseOver && !EquipmentWindow.MouseOver;
         }
     }
 
@@ -470,7 +470,7 @@ namespace ZaohuaAutoCraft
     {
         private static void Postfix(ref bool __result)
         {
-            __result |= DrugWindow.MouseOver;
+            __result |= DrugWindow.MouseOver || EquipmentWindow.MouseOver;
         }
     }
 
@@ -479,7 +479,7 @@ namespace ZaohuaAutoCraft
     {
         private static void Postfix(ref bool __result)
         {
-            __result |= DrugWindow.MouseOver;
+            __result |= DrugWindow.MouseOver || EquipmentWindow.MouseOver;
         }
     }
 }
