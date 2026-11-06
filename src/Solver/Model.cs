@@ -69,6 +69,12 @@ namespace ZaohuaAutoCraft.Solver
         public int Grade;
 
         public int Price;
+
+        /// <summary>TbItemCfg.attribute：1–8 五行（药性规则按它判断），0 表示无。</summary>
+        public int Element;
+
+        /// <summary>补料时可以从商店/商人买到。</summary>
+        public bool Buyable;
     }
 
     public class Grid
@@ -112,6 +118,24 @@ namespace ZaohuaAutoCraft.Solver
         public int Rotate;
     }
 
+    public enum DrugMode
+    {
+        /// <summary>材料件数最少，再比品阶、价格。</summary>
+        MinPieces,
+
+        /// <summary>先比最高品阶，再比品阶总和，再比价格（兼作最便宜）。</summary>
+        LowGrade,
+
+        /// <summary>成丹数最多，再比品质。</summary>
+        MaxCount,
+
+        /// <summary>品质最高，再比成丹数。</summary>
+        MaxQuality,
+
+        /// <summary>按库存能连续炼的次数最多。</summary>
+        MaxBatches
+    }
+
     public class DrugRequest
     {
         public List<Material> Materials = new List<Material>();
@@ -123,12 +147,29 @@ namespace ZaohuaAutoCraft.Solver
 
         public Grid Yin;
 
-        /// <summary>每种材料至少要够炼的批数。</summary>
+        public DrugMode Mode = DrugMode.MinPieces;
+
+        /// <summary>每种材料至少要够炼的批数（MaxBatches 模式下由求解器自己找）。</summary>
         public int Batch = 1;
 
         public int MaxPieces = 24;
 
         public int TimeLimitMs = 1000;
+
+        /// <summary>返回几个不同方案供对比。</summary>
+        public int TopK = 3;
+
+        /// <summary>药性规则（丹方自带 + 丹炉/天赋加的），用于算品质和丹数；为空则不算。</summary>
+        public List<DrugState> States = new List<DrugState>();
+
+        /// <summary>药性规则之前的丹数：丹炉/天赋加成 + 丹方 count。</summary>
+        public int BaseCount = 1;
+
+        /// <summary>药性规则之前的品质：丹炉/天赋加成 + 1。</summary>
+        public int BaseQuality = 1;
+
+        /// <summary>补料模式：材料表里没有库存的可买材料也算候选，目标是购买花费最少。</summary>
+        public bool TopUp;
     }
 
     public class Solution
@@ -142,11 +183,27 @@ namespace ZaohuaAutoCraft.Solver
         public int GradeSum;
 
         public long Price;
+
+        /// <summary>按药性规则预测的成丹数与品质（摆位已优化）。</summary>
+        public int Count;
+
+        public int Quality;
+
+        /// <summary>MaxBatches 模式下按这套摆法能连续炼几次。</summary>
+        public int Batches = 1;
+
+        /// <summary>补料模式：每种材料需要买几件（没有则为空）。</summary>
+        public Dictionary<Material, int> ToBuy = new Dictionary<Material, int>();
+
+        public long BuyCost;
     }
 
     public class SolveResult
     {
-        public Solution Best;
+        public Solution Best => Solutions.Count > 0 ? Solutions[0] : null;
+
+        /// <summary>按当前模式从好到差排好的不同方案（最多 TopK 个）。</summary>
+        public List<Solution> Solutions = new List<Solution>();
 
         /// <summary>凑数有解但都装不下时为 true，方便提示换大丹炉。</summary>
         public bool FoundComboButNoFit;
