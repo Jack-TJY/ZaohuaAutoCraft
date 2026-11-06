@@ -295,10 +295,10 @@ if (Want("equip"))
 {
     RunEquip("全材料·大锤·最少材料", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MinPieces, 2000);
     RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
-    RunEquip("全材料·大锤·指定符文满级", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
-    RunEquip("全材料·大锤·低阶优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
+    RunEquip("全材料·大锤·指定符文优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
+    RunEquip("全材料·大锤·最低品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
     RunEquip("全材料·大锤·最高品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxGrade, 2000, requireActive: false);
-    RunEquip("全材料·大锤·指定属性最大(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 2000, targetAttr: 0, requireActive: false);
+    RunEquip("全材料·大锤·最大属性(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 2000, targetAttr: 0, requireActive: false);
     // 多符文·满足最多符文
     var multiRunes = allRunes.Take(5).ToList();
     var multi = new EquipmentRequest { Materials = all, Runes = multiRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxActiveRunes, TimeLimitMs = 3000, TopK = 1 };
@@ -307,6 +307,15 @@ if (Want("equip"))
     foreach (var s in mr.Solutions)
     {
         Console.WriteLine($"  {s.PieceCount}件 生效{s.Runes.ActiveCount}/{multiRunes.Count} 品阶分{s.Runes.GradeScore} 复核 {(EquipmentSolver.Verify(multi, s) ?? "OK")}");
+    }
+    // 指定符文优先：前 2 个优先
+    var priRunes = allRunes.Take(4).ToList();
+    var pri = new EquipmentRequest { Materials = all, Runes = priRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxRuneLevel, TimeLimitMs = 3000, TopK = 1, Priority = new[] { true, true, false, false } };
+    var pr = new EquipmentSolver(pri).Solve();
+    Console.WriteLine($"[炼器·指定符文优先(前2优先)] 解 {pr.Solutions.Count} 个，{pr.ElapsedMs}ms，{(pr.Message ?? "")}");
+    foreach (var s in pr.Solutions)
+    {
+        Console.WriteLine($"  {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 优先级{s.Runes.Level.Take(2).Sum()}/非优先{s.Runes.Level.Skip(2).Sum()} 复核 {(EquipmentSolver.Verify(pri, s) ?? "OK")}");
     }
 }
 

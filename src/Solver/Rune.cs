@@ -69,6 +69,9 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>MaxRuneLevel 模式：与 Runes 对齐的每符文目标等级。</summary>
         public int[] TargetLevel;
 
+        /// <summary>MaxRuneLevel 模式：与 Runes 对齐的「优先符文」标记（优先符文尽量满级）。</summary>
+        public bool[] Priority;
+
         /// <summary>MaxAttr 模式：目标属性维度（0–7），-1 表示未指定。</summary>
         public int TargetAttr = -1;
     }

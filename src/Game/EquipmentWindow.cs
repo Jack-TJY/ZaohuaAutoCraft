@@ -20,6 +20,8 @@ namespace ZaohuaAutoCraft
 
         List<Rune> runes = new List<Rune>();
 
+        bool[] priority = new bool[0];
+
         int selectedType;
 
         string furnaceText = "";
@@ -111,6 +113,10 @@ namespace ZaohuaAutoCraft
             furnaceText = $"锻造锤：{name}  阳 {f.yangGridSize.x}×{f.yangGridSize.y}  阴 {f.yinGridSize.x}×{f.yinGridSize.y}  属性加成：{Game.DrugBridge.AttrText(bonus)}";
             runes = Game.EquipmentBridge.GetSelectedRunes();
             selectedType = Game.EquipmentBridge.GetSelectedType();
+            if (priority.Length != runes.Count)
+            {
+                priority = new bool[runes.Count];
+            }
         }
 
         public void OnGUI()
@@ -200,16 +206,32 @@ namespace ZaohuaAutoCraft
             GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})");
         }
 
-        static readonly string[] ModeNames = { "满足最多符文", "指定符文满级", "最少材料", "低阶优先", "最高品阶", "指定属性最大" };
+        static readonly string[] ModeNames = { "满足最多符文", "指定符文优先", "最少材料", "最低品阶", "最高品阶", "最大属性" };
 
         void DrawWindow(int id)
         {
             GUILayout.Label(furnaceText);
             GUILayout.Label($"已选符文 {runes.Count} 个（法器类型 {selectedType}）：");
             runeScroll = GUILayout.BeginScrollView(runeScroll, GUILayout.Height(120));
-            foreach (var r in runes)
+            if (priority.Length != runes.Count)
             {
-                GUILayout.Label($"{r.Name}  要求 {Game.DrugBridge.AttrText(r.Requirement)}  满级 {r.MaxStacks}");
+                priority = new bool[runes.Count];
+            }
+            bool priMode = Plugin.EquipmentMode.Value == EquipmentMode.MaxRuneLevel;
+            for (int i = 0; i < runes.Count; i++)
+            {
+                var r = runes[i];
+                if (priMode)
+                {
+                    GUILayout.BeginHorizontal();
+                    priority[i] = GUILayout.Toggle(priority[i], "优先", GUILayout.Width(56));
+                    GUILayout.Label($"{r.Name}  要求 {Game.DrugBridge.AttrText(r.Requirement)}  满级 {r.MaxStacks}");
+                    GUILayout.EndHorizontal();
+                }
+                else
+                {
+                    GUILayout.Label($"{r.Name}  要求 {Game.DrugBridge.AttrText(r.Requirement)}  满级 {r.MaxStacks}");
+                }
             }
             GUILayout.EndScrollView();
 
@@ -324,6 +346,7 @@ namespace ZaohuaAutoCraft
                     Mode = Plugin.EquipmentMode.Value,
                     TimeLimitMs = Plugin.EquipmentTimeLimitMs.Value,
                     TargetAttr = Plugin.EquipmentTargetAttr.Value,
+                    Priority = priority.Length == runes.Count ? priority : new bool[runes.Count],
                     TopK = 3,
                 };
                 result = null;

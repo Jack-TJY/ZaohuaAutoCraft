@@ -89,32 +89,8 @@ namespace ZaohuaAutoCraft.Solver
                 return Finish(result);
             }
             List<EquipmentSolution> sols;
-            switch (req.Mode)
-            {
-                case EquipmentMode.MinPieces:
-                    BuildUnits();
-                    sols = SolveCover(TargetOf(req.Runes, _ => 1));
-                    break;
-                case EquipmentMode.MaxActiveRunes:
-                    BuildUnits();
-                    sols = SolveMaxActive();
-                    break;
-                case EquipmentMode.MaxRuneLevel:
-                    BuildUnits();
-                    sols = SolveCover(MaxLevelTarget());
-                    break;
-                case EquipmentMode.LowGrade:
-                    sols = SolveLowGrade();
-                    break;
-                case EquipmentMode.MaxGrade:
-                case EquipmentMode.MaxAttr:
-                    BuildUnits();
-                    sols = SolveGreedy(req.Mode);
-                    break;
-                default:
-                    result.Message = "未知模式";
-                    return Finish(result);
-            }
+            BuildUnits();
+            sols = SolveSatisfy(req.Mode);
             foreach (var s in sols)
             {
                 Finalize(s);
@@ -572,78 +548,29 @@ namespace ZaohuaAutoCraft.Solver
 
         // ───────────────────────── 其余模式（阶段 3c） ─────────────────────────
 
-        /// <summary>指定符文满级：目标 = 每符文 targetLevel（默认 maxStacks）对应的要求上限。</summary>
-        int[] MaxLevelTarget()
+        /// <summary>模式专属次要收益（越大越好），用于提级选材的平局裁决。</summary>
+        long TieOf(EquipmentMode mode, int[] oldAttrs, int[] newAttrs, RuneResult oldR, RuneResult newR, Material m)
         {
-            var t = new int[Attr.Count];
-            for (int i = 0; i < req.Runes.Count; i++)
+            switch (mode)
             {
-                int lv = req.TargetLevel != null && i < req.TargetLevel.Length ? Math.Max(1, req.TargetLevel[i]) : req.Runes[i].MaxStacks;
-                for (int d = 0; d < Attr.Count; d++)
+                case EquipmentMode.MaxAttr:
                 {
-                    if (req.Runes[i].Requirement[d] > 0)
-                    {
-                        t[d] = Math.Max(t[d], req.Runes[i].Requirement[d] * lv);
-                    }
+                    int ta = Math.Max(0, req.TargetAttr);
+                    return newAttrs[ta] - oldAttrs[ta];
                 }
+                case EquipmentMode.MaxGrade:
+                    return newR.GradeScore - oldR.GradeScore;
+                case EquipmentMode.LowGrade:
+                    return -m.Grade;
+                default:
+                    return -m.Shape.Count;
             }
-            return t;
         }
 
-        /// <summary>低阶优先：材料品阶上限从低往高试，第一个能覆盖目标的门槛即解。</summary>
-        List<EquipmentSolution> SolveLowGrade()
+        /// <summary>从基座贪心加料提级（数量>等级>模式收益），生成基座与逐步提级的候选解。</summary>
+        List<EquipmentSolution> RaiseLevels(EquipmentSolution baseSol, EquipmentMode mode)
         {
-            var grades = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && m.Attrs.Any(v => v != 0)).Select(m => m.Grade).Distinct().OrderBy(g => g).ToList();
-            var target = TargetOf(req.Runes, _ => 1);
-            for (int i = 0; i < grades.Count; i++)
-            {
-                int g = grades[i];
-                anyNoFit = false;
-                timedOut = false;
-                // 时间切片：每档分到均等时间，最后一档用剩余全部
-                long remain = deadline - clock.ElapsedMilliseconds;
-                long until = i == grades.Count - 1 ? deadline : clock.ElapsedMilliseconds + Math.Max(50, remain / (grades.Count - i));
-                long saved = deadline;
-                deadline = until;
-                BuildUnits(g);
-                var sols = SolveCover(target);
-                deadline = saved;
-                if (sols.Count > 0)
-                {
-                    return sols;
-                }
-                if (clock.ElapsedMilliseconds > deadline)
-                {
-                    break;
-                }
-            }
-            return new List<EquipmentSolution>();
-        }
-
-        /// <summary>最高品阶 / 指定属性最大：贪心按「每格收益」选材料，选满后装箱，装不下就丢最低收益的再试。</summary>
-        List<EquipmentSolution> SolveGreedy(EquipmentMode mode)
-        {
-            // 基座：最高品阶先要一个「全符文至少 1 级」的最少材料解，再往上加料冲等级；
-            // 指定属性最大从空开始（只要对目标属性有正贡献的材料）。
-            var baseItems = new List<(Material mat, Side side)>();
-            var attrs = (int[])req.Bonus.Clone();
-            if (mode == EquipmentMode.MaxGrade)
-            {
-                var baseSols = SolveCover(TargetOf(req.Runes, _ => 1));
-                if (baseSols.Count == 0)
-                {
-                    return baseSols;
-                }
-                foreach (var p in baseSols[0].Placements)
-                {
-                    baseItems.Add((p.Material, p.Side));
-                    int sgn = p.Side == Side.Yang ? 1 : -1;
-                    for (int d = 0; d < Attr.Count; d++)
-                    {
-                        attrs[d] += sgn * p.Material.Attrs[d];
-                    }
-                }
-            }
+            var baseItems = baseSol.Placements.Select(p => (mat: p.Material, side: p.Side)).ToList();
             var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
             foreach (var it in baseItems)
             {
@@ -654,15 +581,17 @@ namespace ZaohuaAutoCraft.Solver
             {
                 area[(int)it.side] += it.mat.Shape.Count;
             }
+            var attrs = eval.SumAttrs(baseSol.Placements);
+            var cur = eval.Evaluate(attrs);
 
-            var additions = new List<(Material mat, Side side, double gain)>();
-            int targetAttr = mode == EquipmentMode.MaxAttr ? Math.Max(0, req.TargetAttr) : 0;
+            var additions = new List<(Material mat, Side side, int dc, int dl, int dp, long tie)>();
             while (clock.ElapsedMilliseconds < deadline)
             {
-                double baseScore = mode == EquipmentMode.MaxGrade ? eval.Evaluate(attrs).GradeScore : 0;
-                double bestGain = 0;
                 Material bestMat = null;
                 Side bestSide = Side.Yang;
+                int bdc = 0, bdl = 0, bdp = 0;
+                long btie = 0;
+                bool hasBest = false;
                 foreach (var m in req.Materials)
                 {
                     if (stockLeft[m] <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
@@ -677,63 +606,179 @@ namespace ZaohuaAutoCraft.Solver
                             continue;
                         }
                         int sgn = side == Side.Yang ? 1 : -1;
-                        double gain;
-                        if (mode == EquipmentMode.MaxAttr)
+                        var na = (int[])attrs.Clone();
+                        for (int d = 0; d < Attr.Count; d++)
                         {
-                            gain = sgn * m.Attrs[targetAttr];
+                            na[d] += sgn * m.Attrs[d];
+                        }
+                        var nr = eval.Evaluate(na);
+                        int dc = nr.ActiveCount - cur.ActiveCount;
+                        int dl = nr.TotalLevel - cur.TotalLevel;
+                        int dp = 0;
+                        if (mode == EquipmentMode.MaxRuneLevel)
+                        {
+                            for (int i = 0; i < req.Runes.Count; i++)
+                            {
+                                if (req.Priority != null && i < req.Priority.Length && req.Priority[i])
+                                {
+                                    dp += nr.Level[i] - cur.Level[i];
+                                }
+                            }
+                        }
+                        if (mode == EquipmentMode.MaxRuneLevel)
+                        {
+                            if (dp < 0 || (dp == 0 && (dc < 0 || (dc == 0 && dl <= 0))))
+                            {
+                                continue;
+                            }
+                        }
+                        else if (dc < 0 || (dc == 0 && dl <= 0))
+                        {
+                            continue;
+                        }
+                        long tie = TieOf(mode, attrs, na, cur, nr, m);
+                        bool better;
+                        if (!hasBest)
+                        {
+                            better = true;
+                        }
+                        else if (mode == EquipmentMode.MaxRuneLevel)
+                        {
+                            better = dp > bdp || (dp == bdp && (dc > bdc || (dc == bdc && (dl > bdl || (dl == bdl && tie > btie)))));
                         }
                         else
                         {
-                            var na = (int[])attrs.Clone();
-                            for (int d = 0; d < Attr.Count; d++)
-                            {
-                                na[d] += sgn * m.Attrs[d];
-                            }
-                            gain = eval.Evaluate(na).GradeScore - baseScore;
+                            better = dc > bdc || (dc == bdc && (dl > bdl || (dl == bdl && tie > btie)));
                         }
-                        if (gain > bestGain)
+                        if (better)
                         {
-                            bestGain = gain;
+                            hasBest = true;
+                            bdc = dc;
+                            bdl = dl;
+                            bdp = dp;
+                            btie = tie;
                             bestMat = m;
                             bestSide = side;
                         }
                     }
                 }
-                if (bestMat == null || bestGain <= 0)
+                if (!hasBest)
                 {
                     break;
                 }
-                additions.Add((bestMat, bestSide, bestGain));
+                additions.Add((bestMat, bestSide, bdc, bdl, bdp, btie));
                 stockLeft[bestMat]--;
                 area[(int)bestSide] += bestMat.Shape.Count;
-                int s = bestSide == Side.Yang ? 1 : -1;
+                int s2 = bestSide == Side.Yang ? 1 : -1;
                 for (int d = 0; d < Attr.Count; d++)
                 {
-                    attrs[d] += s * bestMat.Attrs[d];
+                    attrs[d] += s2 * bestMat.Attrs[d];
                 }
+                cur = eval.Evaluate(attrs);
             }
 
-            // 装箱：基座 + 按收益降序逐个试加增量，装不下的放弃
-            var finalItems = new List<(Material mat, Side side)>(baseItems);
-            foreach (var a in additions.OrderByDescending(a => a.gain))
+            var results = new List<EquipmentSolution>();
+            var items = new List<(Material mat, Side side)>(baseItems);
+            var pb = PackItems(items);
+            if (pb == null)
             {
-                finalItems.Add((a.mat, a.side));
-                if (PackItems(finalItems) == null)
+                return results;
+            }
+            results.Add(pb);
+            foreach (var a in additions.OrderByDescending(a => a.dp).ThenByDescending(a => a.dc).ThenByDescending(a => a.dl).ThenByDescending(a => a.tie))
+            {
+                items.Add((a.mat, a.side));
+                var p = PackItems(items);
+                if (p == null)
                 {
-                    finalItems.RemoveAt(finalItems.Count - 1);
+                    items.RemoveAt(items.Count - 1);
+                    continue;
+                }
+                results.Add(p);
+            }
+            return results;
+        }
+
+        /// <summary>统一排序键（越大越好）：数量 > 等级 > 模式专属 > 件数。</summary>
+        IComparable[] RankKey(EquipmentSolution s, EquipmentMode mode)
+        {
+            int active = s.Runes.ActiveCount;
+            int level = s.Runes.TotalLevel;
+            switch (mode)
+            {
+                case EquipmentMode.MinPieces:
+                    return new IComparable[] { active, -s.PieceCount, level };
+                case EquipmentMode.LowGrade:
+                    return new IComparable[] { active, level, -s.MaxGrade, -s.GradeSum, -s.PieceCount };
+                case EquipmentMode.MaxGrade:
+                    return new IComparable[] { active, level, s.Runes.GradeScore, -s.PieceCount };
+                case EquipmentMode.MaxAttr:
+                {
+                    int ta = Math.Max(0, req.TargetAttr);
+                    return new IComparable[] { active, level, s.Runes.FinalAttrs[ta], -s.PieceCount };
+                }
+                case EquipmentMode.MaxRuneLevel:
+                {
+                    int pri = 0;
+                    for (int i = 0; i < req.Runes.Count; i++)
+                    {
+                        if (req.Priority != null && i < req.Priority.Length && req.Priority[i])
+                        {
+                            pri += s.Runes.Level[i];
+                        }
+                    }
+                    return new IComparable[] { pri, active, level, -s.PieceCount };
+                }
+                default:
+                    return new IComparable[] { active, level, -s.PieceCount };
+            }
+        }
+
+        static int CompareRank(IComparable[] a, IComparable[] b)
+        {
+            for (int i = 0; i < a.Length; i++)
+            {
+                int c = b[i].CompareTo(a[i]);
+                if (c != 0)
+                {
+                    return c;
                 }
             }
-            var packed = PackItems(finalItems);
-            var result = new List<EquipmentSolution>();
-            if (packed != null)
+            return 0;
+        }
+
+        static string SolKey(EquipmentSolution s)
+        {
+            return string.Join(",", s.Placements.Select(p => p.Material.Id + "@" + (int)p.Side).OrderBy(x => x, StringComparer.Ordinal));
+        }
+
+        /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
+        List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
+        {
+            var bases = SolveMaxActive();
+            if (bases.Count == 0)
             {
-                result.Add(packed);
+                return bases;
             }
-            else
+            var candidates = new List<EquipmentSolution>();
+            var seen = new HashSet<string>();
+            foreach (var b in bases.Take(2))
             {
-                anyNoFit = true;
+                foreach (var s in RaiseLevels(b, mode))
+                {
+                    Finalize(s);
+                    if (seen.Add(SolKey(s)))
+                    {
+                        candidates.Add(s);
+                    }
+                }
             }
-            return result;
+            if (candidates.Count == 0)
+            {
+                return candidates;
+            }
+            candidates.Sort((x, y) => CompareRank(RankKey(x, mode), RankKey(y, mode)));
+            return candidates.Take(req.TopK).ToList();
         }
 
         EquipmentSolution PackItems(List<(Material mat, Side side)> items)
