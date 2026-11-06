@@ -219,6 +219,18 @@ namespace ZaohuaAutoCraft
             {
                 Plugin.EquipmentMode.Value = (EquipmentMode)newMode;
             }
+            if ((EquipmentMode)newMode == EquipmentMode.MaxAttr)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("目标属性", GUILayout.Width(64));
+                int ta = Mathf.Clamp(Plugin.EquipmentTargetAttr.Value, 0, Attr.Names.Length - 1);
+                int nta = GUILayout.SelectionGrid(ta, Attr.Names, 8);
+                if (nta != ta)
+                {
+                    Plugin.EquipmentTargetAttr.Value = nta;
+                }
+                GUILayout.EndHorizontal();
+            }
             GUILayout.Label("最长计算时间（秒）：");
             int sec = Mathf.Max(1, Plugin.EquipmentTimeLimitMs.Value / 1000);
             GUILayout.BeginHorizontal();
@@ -311,6 +323,7 @@ namespace ZaohuaAutoCraft
                     Yin = new Grid(furnace.yinGridSize.x, furnace.yinGridSize.y),
                     Mode = Plugin.EquipmentMode.Value,
                     TimeLimitMs = Plugin.EquipmentTimeLimitMs.Value,
+                    TargetAttr = Plugin.EquipmentTargetAttr.Value,
                     TopK = 3,
                 };
                 result = null;
