@@ -699,6 +699,186 @@ namespace ZaohuaAutoCraft.Solver
             return results;
         }
 
+        /// <summary>给属性向量加上一件材料（阳加阴减）后的新向量。</summary>
+        int[] AddTo(int[] attrs, Material m, Side side)
+        {
+            var na = (int[])attrs.Clone();
+            int sgn = side == Side.Yang ? 1 : -1;
+            for (int d = 0; d < Attr.Count; d++)
+            {
+                na[d] += sgn * m.Attrs[d];
+            }
+            return na;
+        }
+
+        /// <summary>找一件能提升目标属性、且放得下的材料（收益最高）。</summary>
+        (Material mat, Side side) FindTargetMat(int ta, int[] attrs, Dictionary<Material, long> stock, int[] area)
+        {
+            Material best = null;
+            Side bestSide = Side.Yang;
+            int bestGain = 0;
+            foreach (var m in req.Materials)
+            {
+                if (stock.TryGetValue(m, out long s) && s <= 0)
+                {
+                    continue;
+                }
+                if (m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                {
+                    continue;
+                }
+                foreach (Side side in new[] { Side.Yang, Side.Yin })
+                {
+                    var grid = side == Side.Yang ? req.Yang : req.Yin;
+                    if (grid == null || !Packer.CanFit(grid, m.Shape) || area[(int)side] + m.Shape.Count > grid.Area)
+                    {
+                        continue;
+                    }
+                    int sgn = side == Side.Yang ? 1 : -1;
+                    int gain = sgn * m.Attrs[ta];
+                    if (gain > bestGain)
+                    {
+                        bestGain = gain;
+                        best = m;
+                        bestSide = side;
+                    }
+                }
+            }
+            return (best, bestSide);
+        }
+
+        /// <summary>找一件能提升指定符文等级、且放得下的材料（优先小块）。</summary>
+        (Material mat, Side side) FindRaiseMat(int runeIdx, int[] attrs, Dictionary<Material, long> stock, int[] area)
+        {
+            var cur = eval.Evaluate(attrs);
+            int curLv = cur.Level[runeIdx];
+            Material best = null;
+            Side bestSide = Side.Yang;
+            int bestSize = int.MaxValue;
+            foreach (var m in req.Materials)
+            {
+                if (stock.TryGetValue(m, out long s) && s <= 0)
+                {
+                    continue;
+                }
+                if (m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                {
+                    continue;
+                }
+                foreach (Side side in new[] { Side.Yang, Side.Yin })
+                {
+                    var grid = side == Side.Yang ? req.Yang : req.Yin;
+                    if (grid == null || !Packer.CanFit(grid, m.Shape) || area[(int)side] + m.Shape.Count > grid.Area)
+                    {
+                        continue;
+                    }
+                    var na = AddTo(attrs, m, side);
+                    if (eval.Evaluate(na).Level[runeIdx] > curLv && m.Shape.Count < bestSize)
+                    {
+                        bestSize = m.Shape.Count;
+                        best = m;
+                        bestSide = side;
+                    }
+                }
+            }
+            return (best, bestSide);
+        }
+
+        /// <summary>最大属性专用提级：先满足「目标属性最大」，再逐级提等级；每提一级重新确认目标属性仍最大，否则补目标材料，补不了就回退换符文。</summary>
+        List<EquipmentSolution> RaiseMaxAttr(EquipmentSolution baseSol)
+        {
+            int ta = Math.Max(0, req.TargetAttr);
+            var items = baseSol.Placements.Select(p => (mat: p.Material, side: p.Side)).ToList();
+            var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
+            foreach (var it in items)
+            {
+                stockLeft[it.mat]--;
+            }
+            var area = new int[3];
+            foreach (var it in items)
+            {
+                area[(int)it.side] += it.mat.Shape.Count;
+            }
+            var attrs = eval.SumAttrs(baseSol.Placements);
+
+            var results = new List<EquipmentSolution>();
+            void Record()
+            {
+                var p = PackItems(items);
+                if (p != null)
+                {
+                    results.Add(p);
+                }
+            }
+            Record(); // 基座本身总是有效解
+
+            while (clock.ElapsedMilliseconds < deadline)
+            {
+                bool progressed = false;
+                var cur = eval.Evaluate(attrs);
+                if (RuneEvaluator.ItemAttrOf(attrs) != ta)
+                {
+                    var t = FindTargetMat(ta, attrs, stockLeft, area);
+                    if (t.mat != null)
+                    {
+                        items.Add((t.mat, t.side));
+                        stockLeft[t.mat]--;
+                        area[(int)t.side] += t.mat.Shape.Count;
+                        attrs = AddTo(attrs, t.mat, t.side);
+                        progressed = true;
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < req.Runes.Count; i++)
+                    {
+                        if (cur.Level[i] >= req.Runes[i].MaxStacks)
+                        {
+                            continue;
+                        }
+                        var r = FindRaiseMat(i, attrs, stockLeft, area);
+                        if (r.mat == null)
+                        {
+                            continue;
+                        }
+                        var na = AddTo(attrs, r.mat, r.side);
+                        if (RuneEvaluator.ItemAttrOf(na) == ta)
+                        {
+                            items.Add((r.mat, r.side));
+                            stockLeft[r.mat]--;
+                            area[(int)r.side] += r.mat.Shape.Count;
+                            attrs = na;
+                            progressed = true;
+                            break;
+                        }
+                        var stockCopy = new Dictionary<Material, long>(stockLeft);
+                        stockCopy[r.mat]--;
+                        var areaCopy = (int[])area.Clone();
+                        areaCopy[(int)r.side] += r.mat.Shape.Count;
+                        var c = FindTargetMat(ta, na, stockCopy, areaCopy);
+                        if (c.mat != null)
+                        {
+                            items.Add((r.mat, r.side));
+                            stockLeft[r.mat]--;
+                            area[(int)r.side] += r.mat.Shape.Count;
+                            items.Add((c.mat, c.side));
+                            stockLeft[c.mat]--;
+                            area[(int)c.side] += c.mat.Shape.Count;
+                            attrs = AddTo(AddTo(attrs, r.mat, r.side), c.mat, c.side);
+                            progressed = true;
+                            break;
+                        }
+                    }
+                }
+                if (!progressed)
+                {
+                    break;
+                }
+                Record();
+            }
+            return results;
+        }
+
         /// <summary>统一排序键（越大越好）：数量 > 等级 > 模式专属 > 件数。</summary>
         IComparable[] RankKey(EquipmentSolution s, EquipmentMode mode)
         {
@@ -715,7 +895,7 @@ namespace ZaohuaAutoCraft.Solver
                 case EquipmentMode.MaxAttr:
                 {
                     int ta = Math.Max(0, req.TargetAttr);
-                    return new IComparable[] { active, level, s.Runes.FinalAttrs[ta], -s.PieceCount };
+                    return new IComparable[] { active, s.Runes.FinalAttrs[ta], level, -s.PieceCount };
                 }
                 case EquipmentMode.MaxRuneLevel:
                 {
@@ -764,7 +944,8 @@ namespace ZaohuaAutoCraft.Solver
             var seen = new HashSet<string>();
             foreach (var b in bases.Take(2))
             {
-                foreach (var s in RaiseLevels(b, mode))
+                var raised = mode == EquipmentMode.MaxAttr ? RaiseMaxAttr(b) : RaiseLevels(b, mode);
+                foreach (var s in raised)
                 {
                     Finalize(s);
                     if (seen.Add(SolKey(s)))
