@@ -89,7 +89,6 @@ namespace ZaohuaAutoCraft.Solver
                 return Finish(result);
             }
             List<EquipmentSolution> sols;
-            BuildUnits();
             sols = SolveSatisfy(req.Mode);
             foreach (var s in sols)
             {
@@ -999,10 +998,44 @@ namespace ZaohuaAutoCraft.Solver
             return string.Join(",", s.Placements.Select(p => p.Material.Id + "@" + (int)p.Side).OrderBy(x => x, StringComparer.Ordinal));
         }
 
+        /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
+        List<EquipmentSolution> FindBase(EquipmentMode mode)
+        {
+            if (mode == EquipmentMode.LowGrade)
+            {
+                var grades = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && m.Attrs.Any(v => v != 0)).Select(m => m.Grade).Distinct().OrderBy(g => g).ToList();
+                var target = TargetOf(req.Runes, _ => 1);
+                for (int i = 0; i < grades.Count; i++)
+                {
+                    int g = grades[i];
+                    anyNoFit = false;
+                    timedOut = false;
+                    long remain = deadline - clock.ElapsedMilliseconds;
+                    long until = i == grades.Count - 1 ? deadline : clock.ElapsedMilliseconds + Math.Max(50, remain / (grades.Count - i));
+                    long saved = deadline;
+                    deadline = until;
+                    BuildUnits(g);
+                    var sols = SolveCover(target);
+                    deadline = saved;
+                    if (sols.Count > 0)
+                    {
+                        return sols;
+                    }
+                    if (clock.ElapsedMilliseconds > deadline)
+                    {
+                        break;
+                    }
+                }
+                return new List<EquipmentSolution>();
+            }
+            BuildUnits();
+            return SolveMaxActive();
+        }
+
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
         List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
         {
-            var bases = SolveMaxActive();
+            var bases = FindBase(mode);
             if (bases.Count == 0)
             {
                 return bases;
@@ -1011,7 +1044,19 @@ namespace ZaohuaAutoCraft.Solver
             var seen = new HashSet<string>();
             foreach (var b in bases.Take(2))
             {
-                var raised = mode == EquipmentMode.MaxAttr ? RaiseMaxAttr(b) : RaiseLevels(b, mode);
+                List<EquipmentSolution> raised;
+                if (mode == EquipmentMode.MaxAttr)
+                {
+                    raised = RaiseMaxAttr(b);
+                }
+                else if (mode == EquipmentMode.LowGrade)
+                {
+                    raised = new List<EquipmentSolution> { b };
+                }
+                else
+                {
+                    raised = RaiseLevels(b, mode);
+                }
                 foreach (var s in raised)
                 {
                     Finalize(s);
