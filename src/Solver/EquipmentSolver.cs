@@ -1063,6 +1063,11 @@ namespace ZaohuaAutoCraft.Solver
             {
                 var grades = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && m.Attrs.Any(v => v != 0)).Select(m => m.Grade).Distinct().OrderBy(g => g).ToList();
                 var target = TargetOf(req.Runes, _ => 1);
+                int floor1 = MinGrade(target);
+                if (floor1 > int.MinValue)
+                {
+                    grades = grades.Where(g => g >= floor1).ToList();
+                }
                 for (int i = 0; i < grades.Count; i++)
                 {
                     int g = grades[i];
@@ -1100,6 +1105,82 @@ namespace ZaohuaAutoCraft.Solver
             }
             BuildUnits();
             return SolveMaxActive();
+        }
+
+        /// <summary>去浪费：把方案里每件材料尝试替换成「仍满足目标、但品阶/价值更低」的材料。</summary>
+        EquipmentSolution ReduceWaste(EquipmentSolution sol, EquipmentMode mode)
+        {
+            var baseR = sol.Runes;
+            int ta = Math.Max(0, req.TargetAttr);
+            var items = sol.Placements.Select(p => (mat: p.Material, side: p.Side)).ToList();
+            var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
+            foreach (var it in items)
+            {
+                stockLeft[it.mat]--;
+            }
+            long budget = Math.Min(deadline, clock.ElapsedMilliseconds + 400);
+            bool changed = true;
+            while (changed && clock.ElapsedMilliseconds < budget)
+            {
+                changed = false;
+                for (int i = 0; i < items.Count && clock.ElapsedMilliseconds < budget; i++)
+                {
+                    var cur = items[i];
+                    foreach (var m in req.Materials)
+                    {
+                        if (clock.ElapsedMilliseconds > budget)
+                        {
+                            break;
+                        }
+                        if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                        {
+                            continue;
+                        }
+                        if (m.Grade > cur.mat.Grade)
+                        {
+                            continue;
+                        }
+                        if (m.Grade == cur.mat.Grade && m.Price >= cur.mat.Price)
+                        {
+                            continue;
+                        }
+                        if (ReferenceEquals(m, cur.mat) || stockLeft[m] <= 0)
+                        {
+                            continue;
+                        }
+                        var tmp = new List<(Material mat, Side side)>(items);
+                        tmp[i] = (m, cur.side);
+                        if (PackItems(tmp) == null)
+                        {
+                            continue;
+                        }
+                        var nr = eval.Evaluate(AttrsOf(tmp));
+                        if (nr.ActiveCount < baseR.ActiveCount || nr.TotalLevel < baseR.TotalLevel)
+                        {
+                            continue;
+                        }
+                        if (mode == EquipmentMode.MaxAttr)
+                        {
+                            bool was = RuneEvaluator.ItemAttrOf(AttrsOf(items)) == ta;
+                            bool now = RuneEvaluator.ItemAttrOf(AttrsOf(tmp)) == ta;
+                            if (was && !now)
+                            {
+                                continue;
+                            }
+                        }
+                        stockLeft[cur.mat]++;
+                        stockLeft[m]--;
+                        items = tmp;
+                        changed = true;
+                        break;
+                    }
+                    if (changed)
+                    {
+                        break;
+                    }
+                }
+            }
+            return PackItems(items);
         }
 
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
@@ -1141,7 +1222,16 @@ namespace ZaohuaAutoCraft.Solver
                 return candidates;
             }
             candidates.Sort((x, y) => CompareRank(RankKey(x, mode), RankKey(y, mode)));
-            return candidates.Take(req.TopK).ToList();
+            var top = candidates.Take(req.TopK).ToList();
+            for (int i = 0; i < top.Count; i++)
+            {
+                var reduced = ReduceWaste(top[i], mode);
+                if (reduced != null)
+                {
+                    top[i] = reduced;
+                }
+            }
+            return top;
         }
 
         EquipmentSolution PackItems(List<(Material mat, Side side)> items)
