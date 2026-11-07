@@ -42,8 +42,6 @@ namespace ZaohuaAutoCraft.Solver
 
         readonly List<int>[] posUnitsByDim = new List<int>[Attr.Count];
 
-        readonly List<int>[] priceUnitsByDim = new List<int>[Attr.Count];
-
         readonly int[] maxPos = new int[Attr.Count];
 
         readonly long[] maxReachable = new long[Attr.Count];
@@ -219,7 +217,6 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 int dd = d;
                 posUnitsByDim[d] = posUnitsByDim[d].OrderByDescending(u => units[u].Contrib[dd]).ThenBy(u => units[u].Size).ToList();
-                priceUnitsByDim[d] = posUnitsByDim[d].OrderBy(u => req.Materials[units[u].Mats[0]].Price).ToList();
             }
         }
 
@@ -282,18 +279,18 @@ namespace ZaohuaAutoCraft.Solver
             return timedOut;
         }
 
-        List<int[]> FindCovers(bool[] required, int[] need, int k, int cap, bool byPrice = false)
+        List<int[]> FindCovers(bool[] required, int[] need, int k, int cap)
         {
             var found = new List<int[]>();
             var usage = new int[units.Count];
             var seen = new HashSet<string>();
-            CoverDfs(required, need, k, usage, 0, 0, found, seen, cap, byPrice);
+            CoverDfs(required, need, k, usage, 0, 0, found, seen, cap);
             combosTried += found.Count;
             Debug?.Invoke($"  k={k} found={found.Count} t={clock.ElapsedMilliseconds}");
             return found;
         }
 
-        void CoverDfs(bool[] required, int[] rem, int left, int[] usage, int areaYang, int areaYin, List<int[]> found, HashSet<string> seen, int cap, bool byPrice)
+        void CoverDfs(bool[] required, int[] rem, int left, int[] usage, int areaYang, int areaYin, List<int[]> found, HashSet<string> seen, int cap)
         {
             if (found.Count >= cap || Late())
             {
@@ -348,7 +345,7 @@ namespace ZaohuaAutoCraft.Solver
             {
                 return;
             }
-            foreach (int u in (byPrice ? priceUnitsByDim[best] : posUnitsByDim[best]))
+            foreach (int u in posUnitsByDim[best])
             {
                 var unit = units[u];
                 if (Over(usage, u))
@@ -366,7 +363,7 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     rem[d] -= unit.Contrib[d];
                 }
-                CoverDfs(required, rem, left - 1, usage, ay, an, found, seen, cap, byPrice);
+                CoverDfs(required, rem, left - 1, usage, ay, an, found, seen, cap);
                 for (int d = 0; d < Attr.Count; d++)
                 {
                     rem[d] += unit.Contrib[d];
