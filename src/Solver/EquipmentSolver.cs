@@ -242,7 +242,7 @@ namespace ZaohuaAutoCraft.Solver
             var need = new int[Attr.Count];
             for (int d = 0; d < Attr.Count; d++)
             {
-                need[d] = Math.Max(0, target[d] - req.Bonus[d]);
+                need[d] = target[d] - req.Bonus[d];
             }
             return need;
         }
@@ -279,18 +279,18 @@ namespace ZaohuaAutoCraft.Solver
             return timedOut;
         }
 
-        List<int[]> FindCovers(int[] need, int k, int cap)
+        List<int[]> FindCovers(bool[] required, int[] need, int k, int cap)
         {
             var found = new List<int[]>();
             var usage = new int[units.Count];
             var seen = new HashSet<string>();
-            CoverDfs(need, k, usage, 0, 0, found, seen, cap);
+            CoverDfs(required, need, k, usage, 0, 0, found, seen, cap);
             combosTried += found.Count;
             Debug?.Invoke($"  k={k} found={found.Count} t={clock.ElapsedMilliseconds}");
             return found;
         }
 
-        void CoverDfs(int[] rem, int left, int[] usage, int areaYang, int areaYin, List<int[]> found, HashSet<string> seen, int cap)
+        void CoverDfs(bool[] required, int[] rem, int left, int[] usage, int areaYang, int areaYin, List<int[]> found, HashSet<string> seen, int cap)
         {
             if (found.Count >= cap || Late())
             {
@@ -299,7 +299,7 @@ namespace ZaohuaAutoCraft.Solver
             bool covered = true;
             for (int d = 0; d < Attr.Count; d++)
             {
-                if (rem[d] > 0)
+                if (required[d] && rem[d] > 0)
                 {
                     covered = false;
                     break;
@@ -327,7 +327,7 @@ namespace ZaohuaAutoCraft.Solver
             int bestCount = int.MaxValue;
             for (int d = 0; d < Attr.Count; d++)
             {
-                if (rem[d] <= 0)
+                if (!required[d] || rem[d] <= 0)
                 {
                     continue;
                 }
@@ -363,7 +363,7 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     rem[d] -= unit.Contrib[d];
                 }
-                CoverDfs(rem, left - 1, usage, ay, an, found, seen, cap);
+                CoverDfs(required, rem, left - 1, usage, ay, an, found, seen, cap);
                 for (int d = 0; d < Attr.Count; d++)
                 {
                     rem[d] += unit.Contrib[d];
@@ -413,15 +413,29 @@ namespace ZaohuaAutoCraft.Solver
         List<EquipmentSolution> SolveCover(int[] target)
         {
             var need = NeedOf(target);
+            var required = new bool[Attr.Count];
+            for (int d = 0; d < Attr.Count; d++)
+            {
+                required[d] = target[d] > 0;
+            }
             // 快速判无解：即使把所有可用材料都用上（每件取对第 d 维最有利的一侧）也到不了目标
             for (int d = 0; d < Attr.Count; d++)
             {
-                if (need[d] > 0 && maxReachable[d] < need[d])
+                if (required[d] && need[d] > 0 && maxReachable[d] < need[d])
                 {
                     return new List<EquipmentSolution>();
                 }
             }
-            if (need.All(v => v == 0))
+            bool allCovered = true;
+            for (int d = 0; d < Attr.Count; d++)
+            {
+                if (required[d] && need[d] > 0)
+                {
+                    allCovered = false;
+                    break;
+                }
+            }
+            if (allCovered)
             {
                 // 炉/天赋加成已满足，无需材料
                 return new List<EquipmentSolution> { new EquipmentSolution() };
@@ -430,7 +444,7 @@ namespace ZaohuaAutoCraft.Solver
             var seen = new HashSet<string>();
             for (int k = 1; k <= MaxDepth() && clock.ElapsedMilliseconds < deadline; k++)
             {
-                var combos = FindCovers(need, k, MaxCombosPerDepth);
+                var combos = FindCovers(required, need, k, MaxCombosPerDepth);
                 foreach (var c in combos.OrderBy(c => GradeKey(c), Comparer<IComparable[]>.Create(CompareKeys)))
                 {
                     if (sols.Count >= req.TopK || clock.ElapsedMilliseconds > deadline)
@@ -1133,6 +1147,136 @@ namespace ZaohuaAutoCraft.Solver
                 }
             }
             var sol = PackItems(items);
+            return sol == null ? new List<EquipmentSolution>() : new List<EquipmentSolution> { sol };
+        }
+
+        /// <summary>最低价：分支定界找「覆盖 level-1 需求、总价格最小」的方案（各维度独立用最便宜材料，自然混合品阶）。</summary>
+        List<EquipmentSolution> SolveMinPrice()
+        {
+            var need = NeedOf(TargetOf(req.Runes, _ => 1));
+            if (need.All(v => v == 0))
+            {
+                return new List<EquipmentSolution> { new EquipmentSolution() };
+            }
+            long bestCost = long.MaxValue;
+            int[] bestUsage = null;
+            var usage = new int[units.Count];
+            var attrs = (int[])req.Bonus.Clone();
+            var area = new int[3];
+
+            long LowerBound(int[] cur)
+            {
+                long lb = 0;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    int rem = need[d] - cur[d];
+                    if (rem <= 0)
+                    {
+                        continue;
+                    }
+                    double maxPerPrice = 0;
+                    foreach (var u in units)
+                    {
+                        if (u.Contrib[d] > 0)
+                        {
+                            long price = req.Materials[u.Mats[0]].Price;
+                            maxPerPrice = Math.Max(maxPerPrice, (double)u.Contrib[d] / Math.Max(1, price));
+                        }
+                    }
+                    if (maxPerPrice <= 0)
+                    {
+                        return long.MaxValue;
+                    }
+                    lb += (long)Math.Ceiling(rem / maxPerPrice);
+                }
+                return lb;
+            }
+
+            void Dfs(int startIdx, long cost)
+            {
+                if (clock.ElapsedMilliseconds > deadline)
+                {
+                    return;
+                }
+                bool covered = true;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (need[d] > attrs[d])
+                    {
+                        covered = false;
+                        break;
+                    }
+                }
+                if (covered)
+                {
+                    if (cost < bestCost)
+                    {
+                        bestCost = cost;
+                        bestUsage = (int[])usage.Clone();
+                    }
+                    return;
+                }
+                if (cost >= bestCost)
+                {
+                    return;
+                }
+                long lb = LowerBound(attrs);
+                if (cost + lb >= bestCost)
+                {
+                    return;
+                }
+                for (int u = startIdx; u < units.Count; u++)
+                {
+                    var unit = units[u];
+                    if (Over(usage, u))
+                    {
+                        continue;
+                    }
+                    int side = (int)unit.Side;
+                    if (area[side] + unit.Size > (side == 1 ? capYang : capYin))
+                    {
+                        continue;
+                    }
+                    bool helps = false;
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        if (need[d] > attrs[d] && unit.Contrib[d] > 0)
+                        {
+                            helps = true;
+                            break;
+                        }
+                    }
+                    if (!helps)
+                    {
+                        continue;
+                    }
+                    usage[u]++;
+                    area[side] += unit.Size;
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        attrs[d] += unit.Contrib[d];
+                    }
+                    long unitPrice = req.Materials[unit.Mats[0]].Price;
+                    Dfs(u, cost + unitPrice);
+                    usage[u]--;
+                    area[side] -= unit.Size;
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        attrs[d] -= unit.Contrib[d];
+                    }
+                    if (clock.ElapsedMilliseconds > deadline)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            Dfs(0, 0L);
+            if (bestUsage == null)
+            {
+                return new List<EquipmentSolution>();
+            }
+            var sol = TryPack(bestUsage);
             return sol == null ? new List<EquipmentSolution>() : new List<EquipmentSolution> { sol };
         }
 
