@@ -139,7 +139,7 @@ namespace ZaohuaAutoCraft.Solver
             return id;
         }
 
-        void BuildUnits(int gradeCap = int.MaxValue)
+        void BuildUnits(int gradeCap = int.MaxValue, int gradeFloor = int.MinValue)
         {
             var mats = req.Materials;
             units.Clear();
@@ -151,7 +151,7 @@ namespace ZaohuaAutoCraft.Solver
             for (int i = 0; i < mats.Count; i++)
             {
                 var m = mats[i];
-                if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0) || m.Grade > gradeCap)
+                if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0) || m.Grade > gradeCap || m.Grade < gradeFloor)
                 {
                     continue;
                 }
@@ -998,6 +998,64 @@ namespace ZaohuaAutoCraft.Solver
             return string.Join(",", s.Placements.Select(p => p.Material.Id + "@" + (int)p.Side).OrderBy(x => x, StringComparer.Ordinal));
         }
 
+        /// <summary>满级目标：每维 = max(要求 × maxStacks)。</summary>
+        int[] MaxLevelTarget()
+        {
+            var t = new int[Attr.Count];
+            foreach (var r in req.Runes)
+            {
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (r.Requirement[d] > 0)
+                    {
+                        t[d] = Math.Max(t[d], r.Requirement[d] * r.MaxStacks);
+                    }
+                }
+            }
+            return t;
+        }
+
+        /// <summary>估算最低可用材料品阶：低于此品阶的材料，对任何需求维度，即使填满格子也到不了该维度的目标。</summary>
+        int MinGrade(int[] target)
+        {
+            int capacity = capYang + capYin;
+            if (capacity <= 0)
+            {
+                return int.MinValue;
+            }
+            var need = new double[Attr.Count];
+            bool any = false;
+            for (int d = 0; d < Attr.Count; d++)
+            {
+                if (target[d] > 0)
+                {
+                    need[d] = (double)target[d] / capacity;
+                    any = true;
+                }
+            }
+            if (!any)
+            {
+                return int.MinValue;
+            }
+            int min = int.MaxValue;
+            foreach (var m in req.Materials)
+            {
+                if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                {
+                    continue;
+                }
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (target[d] > 0 && (double)Math.Abs(m.Attrs[d]) / m.Shape.Count >= need[d])
+                    {
+                        min = Math.Min(min, m.Grade);
+                        break;
+                    }
+                }
+            }
+            return min == int.MaxValue ? int.MinValue : min;
+        }
+
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
         List<EquipmentSolution> FindBase(EquipmentMode mode)
         {
@@ -1027,6 +1085,18 @@ namespace ZaohuaAutoCraft.Solver
                     }
                 }
                 return new List<EquipmentSolution>();
+            }
+            int floor = MinGrade(MaxLevelTarget());
+            if (floor > int.MinValue)
+            {
+                BuildUnits(int.MaxValue, floor);
+                var sols = SolveMaxActive();
+                if (sols.Count > 0)
+                {
+                    return sols;
+                }
+                anyNoFit = false;
+                timedOut = false;
             }
             BuildUnits();
             return SolveMaxActive();
