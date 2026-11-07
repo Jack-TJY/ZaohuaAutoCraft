@@ -75,6 +75,9 @@ namespace ZaohuaAutoCraft.Solver
 
         /// <summary>补料时可以从商店/商人买到。</summary>
         public bool Buyable;
+
+        /// <summary>TbItemCfg.typeId：361=炼器材料，342=炼丹材料等。</summary>
+        public int TypeId;
     }
 
     public class Grid
