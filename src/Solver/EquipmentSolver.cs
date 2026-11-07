@@ -956,7 +956,7 @@ namespace ZaohuaAutoCraft.Solver
                 case EquipmentMode.MinPieces:
                     return new IComparable[] { active, -s.PieceCount, level };
                 case EquipmentMode.LowGrade:
-                    return new IComparable[] { active, level, -s.MaxGrade, -s.GradeSum, -s.Price, -s.PieceCount };
+                    return new IComparable[] { active, -s.MaxGrade, -s.GradeSum, -s.Price, -s.PieceCount };
                 case EquipmentMode.MaxGrade:
                     return new IComparable[] { active, level, s.Runes.GradeScore, -s.PieceCount };
                 case EquipmentMode.MaxAttr:
