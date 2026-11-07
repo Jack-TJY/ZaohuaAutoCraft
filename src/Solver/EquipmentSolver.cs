@@ -1423,6 +1423,96 @@ namespace ZaohuaAutoCraft.Solver
             return new EquipmentSolution { Placements = placements };
         }
 
+        /// <summary>最低价局部改善：删除冗余材料 + 把材料替换成更便宜的（不同形状需重装填），保持符文等级不降。</summary>
+        EquipmentSolution ImproveCheaper(EquipmentSolution sol)
+        {
+            var baseR = sol.Runes ?? eval.Evaluate(sol.Placements);
+            var items = sol.Placements.Select(p => (mat: p.Material, side: p.Side)).ToList();
+            var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
+            foreach (var it in items)
+            {
+                stockLeft[it.mat]--;
+            }
+            long budget = Math.Min(deadline, clock.ElapsedMilliseconds + 800);
+            bool changed = true;
+            while (changed && clock.ElapsedMilliseconds < budget)
+            {
+                changed = false;
+                // 1) 删冗余：去掉某件材料后目标仍满足
+                for (int i = 0; i < items.Count && clock.ElapsedMilliseconds < budget; i++)
+                {
+                    var tmp = new List<(Material mat, Side side)>(items);
+                    tmp.RemoveAt(i);
+                    var r = eval.Evaluate(AttrsOf(tmp));
+                    if (r.ActiveCount < baseR.ActiveCount || r.TotalLevel < baseR.TotalLevel)
+                    {
+                        continue;
+                    }
+                    if (PackItems(tmp) == null)
+                    {
+                        continue;
+                    }
+                    stockLeft[items[i].mat]++;
+                    items = tmp;
+                    changed = true;
+                    break;
+                }
+                if (changed)
+                {
+                    continue;
+                }
+                // 2) 换更便宜：同件数替换成更低品阶/更低价格的材料
+                for (int i = 0; i < items.Count && clock.ElapsedMilliseconds < budget; i++)
+                {
+                    var cur = items[i];
+                    foreach (var m in req.Materials)
+                    {
+                        if (clock.ElapsedMilliseconds > budget)
+                        {
+                            break;
+                        }
+                        if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                        {
+                            continue;
+                        }
+                        if (m.Grade > cur.mat.Grade)
+                        {
+                            continue;
+                        }
+                        if (m.Grade == cur.mat.Grade && m.Price >= cur.mat.Price)
+                        {
+                            continue;
+                        }
+                        if (ReferenceEquals(m, cur.mat) || stockLeft[m] <= 0)
+                        {
+                            continue;
+                        }
+                        var tmp = new List<(Material mat, Side side)>(items);
+                        tmp[i] = (m, cur.side);
+                        var r = eval.Evaluate(AttrsOf(tmp));
+                        if (r.ActiveCount < baseR.ActiveCount || r.TotalLevel < baseR.TotalLevel)
+                        {
+                            continue;
+                        }
+                        if (PackItems(tmp) == null)
+                        {
+                            continue;
+                        }
+                        stockLeft[cur.mat]++;
+                        stockLeft[m]--;
+                        items = tmp;
+                        changed = true;
+                        break;
+                    }
+                    if (changed)
+                    {
+                        break;
+                    }
+                }
+            }
+            return PackItems(items);
+        }
+
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
         List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
         {
@@ -1442,7 +1532,8 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 else if (mode == EquipmentMode.LowGrade)
                 {
-                    raised = new List<EquipmentSolution> { b };
+                    var improved = ImproveCheaper(b);
+                    raised = new List<EquipmentSolution> { improved ?? b };
                 }
                 else
                 {
