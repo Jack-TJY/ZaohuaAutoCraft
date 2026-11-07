@@ -1280,11 +1280,35 @@ namespace ZaohuaAutoCraft.Solver
             return sol == null ? new List<EquipmentSolution>() : new List<EquipmentSolution> { sol };
         }
 
+        /// <summary>CP-SAT 求最低价；失败/无解返回空（回退品阶门槛）。</summary>
+        List<EquipmentSolution> SolveCpSat()
+        {
+            try
+            {
+                var items = CpSatQuantity.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, 5.0);
+                if (items == null || items.Count == 0)
+                {
+                    return new List<EquipmentSolution>();
+                }
+                var sol = PackItems(items);
+                return sol == null ? new List<EquipmentSolution>() : new List<EquipmentSolution> { sol };
+            }
+            catch
+            {
+                return new List<EquipmentSolution>();
+            }
+        }
+
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
         List<EquipmentSolution> FindBase(EquipmentMode mode)
         {
             if (mode == EquipmentMode.LowGrade)
             {
+                var cp = SolveCpSat();
+                if (cp.Count > 0)
+                {
+                    return cp;
+                }
                 var grades = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && m.Attrs.Any(v => v != 0)).Select(m => m.Grade).Distinct().OrderBy(g => g).ToList();
                 var target = TargetOf(req.Runes, _ => 1);
                 int floor1 = MinGrade(target);
