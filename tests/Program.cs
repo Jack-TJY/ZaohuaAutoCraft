@@ -317,6 +317,24 @@ if (Want("equip"))
     {
         Console.WriteLine($"  {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 优先级{s.Runes.Level.Take(2).Sum()}/非优先{s.Runes.Level.Skip(2).Sum()} 复核 {(EquipmentSolver.Verify(pri, s) ?? "OK")}");
     }
+    // 飞剑5 配方复现（存档 typeId=151 的符文）
+    var flyIds = new[] { "216", "266", "223", "234", "307", "143", "105" };
+    var flyRunes = allRunes.Where(r => flyIds.Contains(r.Id)).ToList();
+    Console.WriteLine($"[飞剑5] 找到符文 {flyRunes.Count}/{flyIds.Length} 个，满级需求 {string.Join(",", new EquipmentRequest { Runes = flyRunes }.Runes.SelectMany(r => r.Requirement).ToArray())}");
+    foreach (var mode in new[] { EquipmentMode.MinPieces, EquipmentMode.LowGrade })
+    {
+        var fr = new EquipmentRequest { Materials = all, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = mode, TimeLimitMs = 3000, TopK = 1 };
+        var fres = new EquipmentSolver(fr).Solve();
+        Console.WriteLine($"[飞剑5·{mode}] 解 {fres.Solutions.Count} 个，{fres.ElapsedMs}ms，{(fres.Message ?? "")}");
+        foreach (var s in fres.Solutions)
+        {
+            Console.WriteLine($"  {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 复核 {(EquipmentSolver.Verify(fr, s) ?? "OK")}");
+            foreach (var g in s.Placements.GroupBy(p => p.Material).OrderByDescending(g => g.Key.Grade))
+            {
+                Console.WriteLine($"    品阶{g.Key.Grade} 价格{g.Key.Price} id={g.Key.Id} attrs=[{string.Join(",", g.Key.Attrs)}] ×{g.Count()}");
+            }
+        }
+    }
 }
 
 Console.WriteLine(failures == 0 ? "复核全部通过" : $"复核失败 {failures} 个");

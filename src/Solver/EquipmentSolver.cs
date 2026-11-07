@@ -66,7 +66,7 @@ namespace ZaohuaAutoCraft.Solver
 
         int capYin => req.Yin?.Area ?? 0;
 
-        public int MaxCombosPerDepth = 300;
+        public int MaxCombosPerDepth = 1200;
 
         public static Action<string> Debug;
 
@@ -1056,6 +1056,86 @@ namespace ZaohuaAutoCraft.Solver
             return min == int.MaxValue ? int.MinValue : min;
         }
 
+        /// <summary>最低价：贪心按「每格价格贡献」选材料，各维度独立用最便宜的材料凑，自然混合品阶。</summary>
+        List<EquipmentSolution> SolveLowGradeGreedy()
+        {
+            var target = TargetOf(req.Runes, _ => 1);
+            var need = NeedOf(target);
+            var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
+            var area = new int[3];
+            var attrs = (int[])req.Bonus.Clone();
+            var items = new List<(Material mat, Side side)>();
+            while (clock.ElapsedMilliseconds < deadline && items.Count < req.MaxPieces)
+            {
+                var rem = new int[Attr.Count];
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    rem[d] = Math.Max(0, need[d] - attrs[d]);
+                }
+                if (rem.All(v => v == 0))
+                {
+                    break;
+                }
+                Material bestMat = null;
+                Side bestSide = Side.Yang;
+                double bestEff = 0;
+                foreach (var m in req.Materials)
+                {
+                    if (stockLeft[m] <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                    {
+                        continue;
+                    }
+                    foreach (Side side in new[] { Side.Yang, Side.Yin })
+                    {
+                        var grid = side == Side.Yang ? req.Yang : req.Yin;
+                        if (grid == null || !Packer.CanFit(grid, m.Shape) || area[(int)side] + m.Shape.Count > grid.Area)
+                        {
+                            continue;
+                        }
+                        int sgn = side == Side.Yang ? 1 : -1;
+                        long eff = 0;
+                        for (int d = 0; d < Attr.Count; d++)
+                        {
+                            int c = sgn * m.Attrs[d];
+                            if (c > 0)
+                            {
+                                eff += Math.Min(rem[d], c);
+                            }
+                            else if (c < 0 && rem[d] > 0)
+                            {
+                                eff -= Math.Min(rem[d], -c);
+                            }
+                        }
+                        if (eff <= 0)
+                        {
+                            continue;
+                        }
+                        double perPrice = (double)eff / Math.Max(1, m.Price);
+                        if (perPrice > bestEff)
+                        {
+                            bestEff = perPrice;
+                            bestMat = m;
+                            bestSide = side;
+                        }
+                    }
+                }
+                if (bestMat == null)
+                {
+                    break;
+                }
+                items.Add((bestMat, bestSide));
+                stockLeft[bestMat]--;
+                area[(int)bestSide] += bestMat.Shape.Count;
+                int s = bestSide == Side.Yang ? 1 : -1;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    attrs[d] += s * bestMat.Attrs[d];
+                }
+            }
+            var sol = PackItems(items);
+            return sol == null ? new List<EquipmentSolution>() : new List<EquipmentSolution> { sol };
+        }
+
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
         List<EquipmentSolution> FindBase(EquipmentMode mode)
         {
@@ -1107,28 +1187,44 @@ namespace ZaohuaAutoCraft.Solver
             return SolveMaxActive();
         }
 
-        /// <summary>去浪费：把方案里每件材料尝试替换成「仍满足目标、但品阶/价值更低」的材料。</summary>
+        /// <summary>判断两个形状的原始坐标是否完全一致（可原位互换，无需重装填）。</summary>
+        static bool SameShape(List<Cell> a, List<Cell> b)
+        {
+            if (a.Count != b.Count)
+            {
+                return false;
+            }
+            for (int i = 0; i < a.Count; i++)
+            {
+                if (a[i].X != b[i].X || a[i].Y != b[i].Y)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>去浪费：把方案里每件材料尝试原位替换成「同形状、仍满足目标、但品阶/价值更低」的材料。</summary>
         EquipmentSolution ReduceWaste(EquipmentSolution sol, EquipmentMode mode)
         {
             var baseR = sol.Runes;
             int ta = Math.Max(0, req.TargetAttr);
-            var items = sol.Placements.Select(p => (mat: p.Material, side: p.Side)).ToList();
+            var placements = sol.Placements.ToList();
             var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
-            foreach (var it in items)
+            foreach (var p in placements)
             {
-                stockLeft[it.mat]--;
+                stockLeft[p.Material]--;
             }
-            long budget = Math.Min(deadline, clock.ElapsedMilliseconds + 400);
             bool changed = true;
-            while (changed && clock.ElapsedMilliseconds < budget)
+            while (changed && clock.ElapsedMilliseconds < deadline)
             {
                 changed = false;
-                for (int i = 0; i < items.Count && clock.ElapsedMilliseconds < budget; i++)
+                for (int i = 0; i < placements.Count; i++)
                 {
-                    var cur = items[i];
+                    var p = placements[i];
                     foreach (var m in req.Materials)
                     {
-                        if (clock.ElapsedMilliseconds > budget)
+                        if (clock.ElapsedMilliseconds > deadline)
                         {
                             break;
                         }
@@ -1136,41 +1232,41 @@ namespace ZaohuaAutoCraft.Solver
                         {
                             continue;
                         }
-                        if (m.Grade > cur.mat.Grade)
+                        if (m.Grade > p.Material.Grade)
                         {
                             continue;
                         }
-                        if (m.Grade == cur.mat.Grade && m.Price >= cur.mat.Price)
+                        if (m.Grade == p.Material.Grade && m.Price >= p.Material.Price)
                         {
                             continue;
                         }
-                        if (ReferenceEquals(m, cur.mat) || stockLeft[m] <= 0)
+                        if (ReferenceEquals(m, p.Material) || stockLeft[m] <= 0)
                         {
                             continue;
                         }
-                        var tmp = new List<(Material mat, Side side)>(items);
-                        tmp[i] = (m, cur.side);
-                        if (PackItems(tmp) == null)
+                        if (!SameShape(m.Shape, p.Material.Shape))
                         {
                             continue;
                         }
-                        var nr = eval.Evaluate(AttrsOf(tmp));
+                        var tmp = placements.ToList();
+                        tmp[i] = new Placement { Material = m, Side = p.Side, X = p.X, Y = p.Y, Rotate = p.Rotate };
+                        var nr = eval.Evaluate(eval.SumAttrs(tmp));
                         if (nr.ActiveCount < baseR.ActiveCount || nr.TotalLevel < baseR.TotalLevel)
                         {
                             continue;
                         }
                         if (mode == EquipmentMode.MaxAttr)
                         {
-                            bool was = RuneEvaluator.ItemAttrOf(AttrsOf(items)) == ta;
-                            bool now = RuneEvaluator.ItemAttrOf(AttrsOf(tmp)) == ta;
+                            bool was = RuneEvaluator.ItemAttrOf(eval.SumAttrs(placements)) == ta;
+                            bool now = RuneEvaluator.ItemAttrOf(eval.SumAttrs(tmp)) == ta;
                             if (was && !now)
                             {
                                 continue;
                             }
                         }
-                        stockLeft[cur.mat]++;
+                        stockLeft[p.Material]++;
                         stockLeft[m]--;
-                        items = tmp;
+                        placements = tmp;
                         changed = true;
                         break;
                     }
@@ -1180,7 +1276,7 @@ namespace ZaohuaAutoCraft.Solver
                     }
                 }
             }
-            return PackItems(items);
+            return new EquipmentSolution { Placements = placements };
         }
 
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
