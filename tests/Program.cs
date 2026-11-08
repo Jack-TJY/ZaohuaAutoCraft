@@ -491,7 +491,7 @@ if (Environment.GetEnvironmentVariable("CMP2") != null)
             long hObj = ObjOf(h.Best, mode, ta, priority);
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
-            var cpItems = CpSatSolver.SolveLeveled(m361, runes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), 10.0, mode, ta, priority);
+            var cpItems = CpSatQuantity.SolveLeveled(m361, runes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), 10.0, mode, ta, priority);
             sw.Stop();
             long cpObj = -1;
             string cpPack = "无解";

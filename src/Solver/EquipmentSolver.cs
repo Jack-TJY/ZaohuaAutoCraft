@@ -1130,6 +1130,42 @@ namespace ZaohuaAutoCraft.Solver
             return null;
         }
 
+        /// <summary>CP-SAT 等级建模求最高品阶/指定符文优先；失败返回空（回退启发式）。装不下时加形状切割重求。</summary>
+        List<EquipmentSolution> SolveCpSatLeveled(EquipmentMode mode)
+        {
+            try
+            {
+                int ta = Math.Max(0, req.TargetAttr);
+                bool[] pri = req.Priority != null && req.Priority.Length == req.Runes.Count ? req.Priority : new bool[req.Runes.Count];
+                var cuts = new List<CpSatQuantity.ShapeCut>();
+                for (int iter = 0; iter < 3; iter++)
+                {
+                    double remainSec = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
+                    var items = CpSatQuantity.SolveLeveled(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, mode, ta, pri, cuts);
+                    if (items == null || items.Count == 0)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    var sol = PackItems(items);
+                    if (sol != null)
+                    {
+                        return new List<EquipmentSolution> { sol };
+                    }
+                    var cut = FailingShapeCut(items);
+                    if (cut == null)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    cuts.Add(cut);
+                }
+                return new List<EquipmentSolution>();
+            }
+            catch
+            {
+                return new List<EquipmentSolution>();
+            }
+        }
+
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
         List<EquipmentSolution> FindBase(EquipmentMode mode)
         {
@@ -1381,6 +1417,15 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
         List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
         {
+            // 最高品阶 / 指定符文优先：先试 CP-SAT 等级建模（已证实启发式非最优）
+            if (mode == EquipmentMode.MaxGrade || mode == EquipmentMode.MaxRuneLevel)
+            {
+                var cp = SolveCpSatLeveled(mode);
+                if (cp.Count > 0)
+                {
+                    return cp;
+                }
+            }
             var bases = FindBase(mode);
             if (bases.Count == 0)
             {
