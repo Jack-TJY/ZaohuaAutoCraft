@@ -257,6 +257,21 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 model.Maximize(LinearExpr.Sum(terms));
             }
+            else if (mode == EquipmentMode.MinPieces)
+            {
+                // 目标：max 等级（权重 10000），同等级 min 件数（权重 -1）
+                var minTerms = new List<LinearExpr>();
+                for (int r = 0; r < runes.Count; r++)
+                {
+                    minTerms.Add(LinearExpr.Term(levelVar[r], 10000));
+                }
+                foreach (int i in active)
+                {
+                    minTerms.Add(LinearExpr.Term(yangVar[i], -1));
+                    minTerms.Add(LinearExpr.Term(yinVar[i], -1));
+                }
+                model.Maximize(LinearExpr.Sum(minTerms));
+            }
             else
             {
                 model.Maximize(LinearExpr.Sum(objTerms));
