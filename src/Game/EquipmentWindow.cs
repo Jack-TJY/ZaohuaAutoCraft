@@ -207,9 +207,9 @@ namespace ZaohuaAutoCraft
         }
 
         // 满足最多符文是所有模式的内在前提，不再作为独立模式展示
-        static readonly string[] ModeNames = { "指定符文优先", "最少材料", "最低品阶", "最高品阶", "最大属性" };
+        static readonly string[] ModeNames = { "指定符文优先", "最少材料", "最低品阶", "最多炼制次数", "最大属性" };
 
-        static readonly EquipmentMode[] ModeValues = { EquipmentMode.MaxRuneLevel, EquipmentMode.MinPieces, EquipmentMode.LowGrade, EquipmentMode.MaxGrade, EquipmentMode.MaxAttr };
+        static readonly EquipmentMode[] ModeValues = { EquipmentMode.MaxRuneLevel, EquipmentMode.MinPieces, EquipmentMode.LowGrade, EquipmentMode.MaxBatches, EquipmentMode.MaxAttr };
 
         void DrawWindow(int id)
         {

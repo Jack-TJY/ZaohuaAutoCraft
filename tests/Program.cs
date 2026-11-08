@@ -301,7 +301,7 @@ if (Want("equip"))
     RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
     RunEquip("全材料·大锤·指定符文优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
     RunEquip("全材料·大锤·最低品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
-    RunEquip("全材料·大锤·最高品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxGrade, 2000, requireActive: false);
+    RunEquip("全材料·大锤·最多炼制次数", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxBatches, 2000, requireActive: false);
     RunEquip("全材料·大锤·最大属性(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 2000, targetAttr: 0, requireActive: false);
     // 多符文·满足最多符文
     var multiRunes = allRunes.Take(5).ToList();
@@ -471,13 +471,13 @@ if (Environment.GetEnvironmentVariable("CMP2") != null)
         {
             return -1;
         }
-        if (m == EquipmentMode.MaxGrade) return s.Runes.GradeScore;
+        if (m == EquipmentMode.MaxBatches) return s.Runes.TotalLevel;
         if (m == EquipmentMode.MaxAttr) return s.Runes.FinalAttrs[ta];
         long p = 0;
         for (int i = 0; i < s.Runes.Level.Length; i++) if (pri != null && i < pri.Length && pri[i]) p += s.Runes.Level[i];
         return p;
     }
-    foreach (var mode in new[] { EquipmentMode.MaxGrade, EquipmentMode.MaxAttr, EquipmentMode.MaxRuneLevel })
+    foreach (var mode in new[] { EquipmentMode.MaxBatches, EquipmentMode.MaxAttr, EquipmentMode.MaxRuneLevel })
     {
         int ta = 0;
         Console.WriteLine($"===== 对比·{mode} =====");
@@ -507,7 +507,7 @@ if (Environment.GetEnvironmentVariable("CMP2") != null)
                     cpPack = "OK";
                     var eval = new RuneEvaluator(runes, new int[Attr.Count]);
                     var rr = eval.Evaluate(sol.Placements);
-                    if (mode == EquipmentMode.MaxGrade) cpObj = rr.GradeScore;
+                    if (mode == EquipmentMode.MaxBatches) cpObj = rr.TotalLevel;
                     else if (mode == EquipmentMode.MaxAttr) cpObj = rr.FinalAttrs[ta];
                     else { long p = 0; for (int i = 0; i < rr.Level.Length; i++) if (priority[i]) p += rr.Level[i]; cpObj = p; }
                 }

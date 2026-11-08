@@ -232,10 +232,9 @@ namespace ZaohuaAutoCraft.Solver
                     terms.Add(LinearExpr.Term(levelVar[r], -req));
                     model.Add(LinearExpr.Sum(terms) >= -bonus[d]);
                 }
-                int w = rune.Weight != 0 ? rune.Weight : rune.DefaultWeight;
-                if (mode == EquipmentMode.MaxGrade)
+                if (mode == EquipmentMode.MaxBatches)
                 {
-                    objTerms.Add(LinearExpr.Term(levelVar[r], w));
+                    objTerms.Add(LinearExpr.Term(levelVar[r], 1));
                 }
                 else if (mode == EquipmentMode.MaxRuneLevel)
                 {
