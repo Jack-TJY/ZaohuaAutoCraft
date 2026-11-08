@@ -1014,9 +1014,72 @@ namespace ZaohuaAutoCraft.Solver
             return PackItems(items);
         }
 
+        /// <summary>统一流程排序键（越大越好）：优先级组覆盖(先覆盖再逐层升级) › 材料策略(次数/低阶) › −总价 › −件数。</summary>
+        IComparable[] UnifiedRankKey(EquipmentSolution s)
+        {
+            int maxGroup = 0;
+            var pg = req.PriorityGroup;
+            for (int r = 0; r < req.Runes.Count; r++)
+            {
+                maxGroup = Math.Max(maxGroup, pg != null && r < pg.Length ? Math.Max(0, pg[r]) : 0);
+            }
+            var lv = s.Runes.Level;
+            long score = 0;
+            for (int g = 0; g <= maxGroup; g++)
+            {
+                long gw = 1;
+                for (int k = 0; k < maxGroup - g; k++)
+                {
+                    gw *= 1000;
+                }
+                long cov = 0, dep = 0;
+                for (int r = 0; r < req.Runes.Count; r++)
+                {
+                    int rg = pg != null && r < pg.Length ? Math.Max(0, pg[r]) : 0;
+                    if (rg != g)
+                    {
+                        continue;
+                    }
+                    cov += lv[r] >= 1 ? 1 : 0;
+                    dep += lv[r];
+                }
+                score += gw * (1000 * cov + dep);
+            }
+            long pol;
+            if (req.MaterialPolicy == MaterialPolicy.MaxRepeatCount)
+            {
+                pol = s.Batches;
+            }
+            else
+            {
+                pol = -GradeRankSum(s);
+            }
+            return new IComparable[] { score, pol, -s.Price, -s.PieceCount };
+        }
+
+        long GradeRankSum(EquipmentSolution s)
+        {
+            var grades = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0).Select(m => m.Grade).Distinct().OrderBy(g => g).ToList();
+            var rank = new Dictionary<int, int>();
+            for (int i = 0; i < grades.Count; i++)
+            {
+                rank[grades[i]] = i;
+            }
+            long sum = 0;
+            foreach (var p in s.Placements)
+            {
+                sum += rank.TryGetValue(p.Material.Grade, out var r) ? r : 0;
+            }
+            return sum;
+        }
+
         /// <summary>统一排序键（越大越好）。比较顺序：最少材料/最多炼制次数=符文数量&gt;符文等级&gt;件数/次数；指定符文优先=优先等级&gt;符文数量&gt;其它等级&gt;件数；最高属性=目标属性&gt;符文数量&gt;等级&gt;次数。</summary>
         IComparable[] RankKey(EquipmentSolution s, EquipmentMode mode)
         {
+            if (req.Unified)
+            {
+                return UnifiedRankKey(s);
+            }
             int active = s.Runes.ActiveCount;
             int level = s.Runes.TotalLevel;
             switch (mode)
@@ -1518,6 +1581,17 @@ namespace ZaohuaAutoCraft.Solver
                 if (cu.Count > 0)
                 {
                     solvePath = "CP-SAT(统一)";
+                    foreach (var s in cu)
+                    {
+                        Finalize(s);
+                    }
+                    // 统一节省：CP 成功结果也走 ReduceWaste（保持统一排序键不下降）
+                    var reduced = ReduceWaste(cu[0], EquipmentMode.MaxAttr);
+                    if (reduced != null)
+                    {
+                        Finalize(reduced);
+                        cu[0] = reduced;
+                    }
                     return cu;
                 }
                 // 统一流程失败：回退到启发式（按优先级组提级）
