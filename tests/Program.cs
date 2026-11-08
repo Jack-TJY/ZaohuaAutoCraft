@@ -657,6 +657,33 @@ if (Environment.GetEnvironmentVariable("UTEST") != null)
     RunU("10未用不影响次数", new List<Material> { SM2("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 100), SM2("z", new[] { 9, 0, 0, 0, 0, 0, 0, 0 }, 6, 1) },
         RR(("r", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1)),
         new Grid(3, 3), new Grid(1, 1), -1, s => s.Batches >= 100 || (s.PieceCount == 1 && s.Batches >= 99));
+    // 03 只能激活 2/3 → 返回部分方案而非整体无解
+    RunU("03部分激活", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99) },
+        RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 1), ("c", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 1)),
+        new Grid(3, 3), new Grid(1, 1), -1, s => s.Runes.ActiveCount == 2);
+    // 05 优先级 A>B：A 等级不低于 B
+    {
+        var req5 = new EquipmentRequest
+        {
+            Materials = new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99) },
+            Runes = RR(("A", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 3), ("B", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 3)),
+            Yang = new Grid(4, 4),
+            Yin = new Grid(1, 1),
+            Unified = true,
+            TargetAttr = -1,
+            PriorityGroup = new[] { 0, 1 },
+            TimeLimitMs = 3000,
+            TopK = 1,
+        };
+        var res5 = new EquipmentSolver(req5).Solve();
+        var s5 = res5.Solutions.Count > 0 ? res5.Solutions[0] : null;
+        bool ok5 = s5 != null && s5.Runes.Level[0] >= s5.Runes.Level[1];
+        if (!ok5)
+        {
+            failures++;
+        }
+        Console.WriteLine($"[UT 05优先级] {(s5 == null ? "无解" : $"A{s5.Runes.Level[0]} B{s5.Runes.Level[1]}")} {(ok5 ? "✓" : "✗")}");
+    }
     Console.WriteLine(failures == 0 ? "[UT] 全部通过" : $"[UT] 失败 {failures} 个");
 }
 
