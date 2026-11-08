@@ -971,7 +971,7 @@ namespace ZaohuaAutoCraft.Solver
                 case EquipmentMode.LowGrade:
                     return new IComparable[] { active, -s.MaxGrade, -s.GradeSum, -s.Price, -s.PieceCount };
                 case EquipmentMode.MaxBatches:
-                    return new IComparable[] { active, level, s.Batches };
+                    return new IComparable[] { active, level, s.Batches, -s.PieceCount };
                 case EquipmentMode.MaxAttr:
                 {
                     int ta = Math.Max(0, req.TargetAttr);

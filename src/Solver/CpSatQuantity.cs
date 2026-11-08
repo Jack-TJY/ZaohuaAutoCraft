@@ -234,8 +234,8 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 if (mode == EquipmentMode.MaxBatches)
                 {
-                    // 等级权重须大于炼制次数上界(10000)，否则等级会因平局被牺牲
-                    objTerms.Add(LinearExpr.Term(levelVar[r], 100000));
+                    // 等级权重须 > 次数权重(200) × 次数上界(10000)=2000000
+                    objTerms.Add(LinearExpr.Term(levelVar[r], 2000001));
                 }
                 else if (mode == EquipmentMode.MaxRuneLevel)
                 {
@@ -275,13 +275,13 @@ namespace ZaohuaAutoCraft.Solver
             }
             else if (mode == EquipmentMode.MaxBatches)
             {
-                // 目标：max 等级（权重 100000），同等级 max 炼制次数（B）
-                long minStock = active.Count > 0 ? active.Min(i => materials[i].Stock) : 1;
+                // 目标：max 等级(2000001) > max 次数(200) > min 件数(1)
+                long minStock = active.Count > 0 ? active.Min(i => Math.Min(materials[i].Stock, 10000L)) : 1;
                 if (minStock < 1)
                 {
                     minStock = 1;
                 }
-                var bVar = model.NewIntVar(1, Math.Min(minStock, 100000), "batches");
+                var bVar = model.NewIntVar(1, minStock, "batches");
                 foreach (int i in active)
                 {
                     long cap = Math.Min(materials[i].Stock, 10000L);
@@ -292,7 +292,12 @@ namespace ZaohuaAutoCraft.Solver
                     model.Add(prod <= materials[i].Stock);
                 }
                 var obj = new List<LinearExpr>(objTerms);
-                obj.Add(LinearExpr.Term(bVar, 1));
+                obj.Add(LinearExpr.Term(bVar, 200));
+                foreach (int i in active)
+                {
+                    obj.Add(LinearExpr.Term(yangVar[i], -1));
+                    obj.Add(LinearExpr.Term(yinVar[i], -1));
+                }
                 model.Maximize(LinearExpr.Sum(obj));
             }
             else
