@@ -158,7 +158,7 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>等级建模：求各模式的等级最优（最高品阶/指定属性最大/指定符文优先）。返回材料件数方案。</summary>
         public static List<(Material mat, Side side)> SolveLeveled(
             List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin, double timeLimitSec,
-            EquipmentMode mode, int targetAttr = 0, bool[] priority = null, List<ShapeCut> cuts = null)
+            EquipmentMode mode, int targetAttr = 0, bool[] priority = null, List<ShapeCut> cuts = null, bool dominant = true)
         {
             var model = new CpModel();
             var yangVar = new IntVar[materials.Count];
@@ -247,32 +247,35 @@ namespace ZaohuaAutoCraft.Solver
             {
                 int ta = Math.Max(0, targetAttr);
                 int wTa = (ta == 5 || ta == 6 || ta == 7) ? 10 : 1;
-                // 目标属性领先：scaled_ta >= scaled_d + (ta != 0 ? 1 : 0)，并列归金
-                for (int d = 0; d < Attr.Count; d++)
+                if (dominant)
                 {
-                    if (d == ta)
+                    // 目标属性领先：scaled_ta >= scaled_d + (ta != 0 ? 1 : 0)，并列归金
+                    for (int d = 0; d < Attr.Count; d++)
                     {
-                        continue;
-                    }
-                    int wD = (d == 5 || d == 6 || d == 7) ? 10 : 1;
-                    var domTerms = new List<LinearExpr>();
-                    foreach (int i in active)
-                    {
-                        int aTa = materials[i].Attrs[ta] * wTa;
-                        if (aTa != 0)
+                        if (d == ta)
                         {
-                            domTerms.Add(LinearExpr.Term(yangVar[i], aTa));
-                            domTerms.Add(LinearExpr.Term(yinVar[i], -aTa));
+                            continue;
                         }
-                        int aD = materials[i].Attrs[d] * wD;
-                        if (aD != 0)
+                        int wD = (d == 5 || d == 6 || d == 7) ? 10 : 1;
+                        var domTerms = new List<LinearExpr>();
+                        foreach (int i in active)
                         {
-                            domTerms.Add(LinearExpr.Term(yangVar[i], -aD));
-                            domTerms.Add(LinearExpr.Term(yinVar[i], aD));
+                            int aTa = materials[i].Attrs[ta] * wTa;
+                            if (aTa != 0)
+                            {
+                                domTerms.Add(LinearExpr.Term(yangVar[i], aTa));
+                                domTerms.Add(LinearExpr.Term(yinVar[i], -aTa));
+                            }
+                            int aD = materials[i].Attrs[d] * wD;
+                            if (aD != 0)
+                            {
+                                domTerms.Add(LinearExpr.Term(yangVar[i], -aD));
+                                domTerms.Add(LinearExpr.Term(yinVar[i], aD));
+                            }
                         }
+                        long rhsConst = (ta != 0 ? 1L : 0L) + (long)bonus[d] * wD - (long)bonus[ta] * wTa;
+                        model.Add(LinearExpr.Sum(domTerms) >= rhsConst);
                     }
-                    long rhsConst = (ta != 0 ? 1L : 0L) + (long)bonus[d] * wD - (long)bonus[ta] * wTa;
-                    model.Add(LinearExpr.Sum(domTerms) >= rhsConst);
                 }
                 // 目标：max attrs[ta]（权重 200）> max 等级（权重 1）
                 var objAttr = new List<LinearExpr>();

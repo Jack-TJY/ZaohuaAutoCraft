@@ -1135,7 +1135,7 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         /// <summary>CP-SAT 等级建模求最高品阶/指定符文优先；失败返回空（回退启发式）。装不下时加形状切割重求。</summary>
-        List<EquipmentSolution> SolveCpSatLeveled(EquipmentMode mode)
+        List<EquipmentSolution> SolveCpSatLeveled(EquipmentMode mode, bool dominant = true)
         {
             try
             {
@@ -1145,7 +1145,7 @@ namespace ZaohuaAutoCraft.Solver
                 for (int iter = 0; iter < 3; iter++)
                 {
                     double remainSec = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
-                    var items = CpSatQuantity.SolveLeveled(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, mode, ta, pri, cuts);
+                    var items = CpSatQuantity.SolveLeveled(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, mode, ta, pri, cuts, dominant);
                     if (items == null || items.Count == 0)
                     {
                         return new List<EquipmentSolution>();
@@ -1464,6 +1464,20 @@ namespace ZaohuaAutoCraft.Solver
             }
             if (candidates.Count == 0)
             {
+                // 最大属性：目标属性领先不可行时，退化为不强制领先（最大化目标属性值，避免整体无解）
+                // 仅当目标属性值 > 0（确有目标属性材料/符文）才返回，否则保持无解（避免 P1「无火返回金」回归）
+                if (mode == EquipmentMode.MaxAttr)
+                {
+                    var cp2 = SolveCpSatLeveled(mode, dominant: false);
+                    if (cp2.Count > 0)
+                    {
+                        int ta = Math.Max(0, req.TargetAttr);
+                        if (eval.SumAttrs(cp2[0].Placements)[ta] > 0)
+                        {
+                            return cp2;
+                        }
+                    }
+                }
                 return candidates;
             }
             candidates.Sort((x, y) => CompareRank(RankKey(x, mode), RankKey(y, mode)));
