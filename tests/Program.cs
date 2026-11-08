@@ -649,6 +649,10 @@ if (Environment.GetEnvironmentVariable("UTEST") != null)
     RunU("01覆盖优先", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("w", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("m", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 6, 99) },
         RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 5), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5), ("c", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 5)),
         new Grid(3, 3), new Grid(1, 1), -1, s => s.Runes.Level[0] >= 1 && s.Runes.Level[1] >= 1 && s.Runes.Level[2] >= 1);
+    // 02 逐层覆盖：(2,2) 优于 (3,1)
+    RunU("02逐层覆盖", new List<Material> { SM2("pg", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 4), SM2("pw", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 4) },
+        RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 5), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5)),
+        new Grid(2, 2), new Grid(1, 1), -1, s => s.Runes.Level[0] >= 2 && s.Runes.Level[1] >= 2);
     // 07 两火符文共享需求：10 与 20 只需火 20，不是 30
     RunU("07共享需求", new List<Material> { SM2("f", new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, 6, 99) },
         RR(("r1", new[] { 0, 0, 0, 10, 0, 0, 0, 0 }, 3), ("r2", new[] { 0, 0, 0, 20, 0, 0, 0, 0 }, 3)),

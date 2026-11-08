@@ -426,13 +426,25 @@ namespace ZaohuaAutoCraft.Solver
             // 层数变量：允许 0（逐层覆盖语义）
             var levelVar = new IntVar[runes.Count];
             var hasVar = new IntVar[runes.Count];
+            var has2Var = new IntVar[runes.Count];
             for (int r = 0; r < runes.Count; r++)
             {
                 var rune = runes[r];
                 levelVar[r] = model.NewIntVar(0, rune.MaxStacks, $"lv{r}");
                 hasVar[r] = model.NewBoolVar($"h{r}");
+                has2Var[r] = model.NewBoolVar($"h2{r}");
                 model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(hasVar[r], rune.MaxStacks), LinearExpr.Term(levelVar[r], -1) }) >= 0);
                 model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1), LinearExpr.Term(hasVar[r], -1) }) >= 0);
+                if (rune.MaxStacks >= 2)
+                {
+                    // has2=1 当且仅当 等级>=2
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has2Var[r], rune.MaxStacks - 1), LinearExpr.Term(levelVar[r], -1) }) >= -1);
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1), LinearExpr.Term(has2Var[r], -1) }) >= 1);
+                }
+                else
+                {
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has2Var[r], 1) }) == 0);
+                }
                 for (int d = 0; d < Attr.Count; d++)
                 {
                     int req = rune.Requirement[d];
@@ -516,9 +528,10 @@ namespace ZaohuaAutoCraft.Solver
                     {
                         continue;
                     }
-                    // 符文质量是第一目标：整体放大到压过材料策略(品阶和/次数)项
-                    grp.Add(LinearExpr.Term(hasVar[r], gw * 1000L * 10000000L));
-                    grp.Add(LinearExpr.Term(levelVar[r], gw * 10000000L));
+                    // 符文质量是第一目标：先覆盖1层，再覆盖2层，再总等级；整体放大压过材料策略
+                    grp.Add(LinearExpr.Term(hasVar[r], gw * 100000L * 1000000L));
+                    grp.Add(LinearExpr.Term(has2Var[r], gw * 1000L * 1000000L));
+                    grp.Add(LinearExpr.Term(levelVar[r], gw * 1000000L));
                 }
                 obj.Add(LinearExpr.Sum(grp));
             }
