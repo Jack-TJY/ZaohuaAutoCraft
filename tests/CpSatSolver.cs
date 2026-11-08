@@ -45,6 +45,130 @@ namespace ZaohuaAutoCraft.Tests
             return res;
         }
 
+        /// <summary>等级建模 CP-SAT：求各模式的等级最优（最高品阶/指定属性最大/指定符文优先）。返回材料件数方案。</summary>
+        public static List<(Material mat, Side side)> SolveLeveled(
+            List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin, double timeLimitSec,
+            EquipmentMode mode, int targetAttr = 0, bool[] priority = null)
+        {
+            var model = new CpModel();
+            var yangVar = new IntVar[materials.Count];
+            var yinVar = new IntVar[materials.Count];
+            var active = new List<int>();
+            for (int i = 0; i < materials.Count; i++)
+            {
+                var m = materials[i];
+                if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                {
+                    continue;
+                }
+                bool helps = false;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (m.Attrs[d] != 0)
+                    {
+                        helps = true;
+                        break;
+                    }
+                }
+                if (!helps)
+                {
+                    continue;
+                }
+                int stock = (int)Math.Min(m.Stock, 10000L);
+                yangVar[i] = model.NewIntVar(0, stock, $"y{i}");
+                yinVar[i] = model.NewIntVar(0, stock, $"n{i}");
+                active.Add(i);
+                model.Add(yangVar[i] + yinVar[i] <= stock);
+            }
+            if (yang != null && active.Count > 0)
+            {
+                model.Add(LinearExpr.Sum(active.Select(i => LinearExpr.Term(yangVar[i], materials[i].Shape.Count))) <= yang.Area);
+            }
+            if (yin != null && active.Count > 0)
+            {
+                model.Add(LinearExpr.Sum(active.Select(i => LinearExpr.Term(yinVar[i], materials[i].Shape.Count))) <= yin.Area);
+            }
+            var levelVar = new IntVar[runes.Count];
+            var objTerms = new List<LinearExpr>();
+            for (int r = 0; r < runes.Count; r++)
+            {
+                var rune = runes[r];
+                levelVar[r] = model.NewIntVar(1, rune.MaxStacks, $"lv{r}");
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    int req = rune.Requirement[d];
+                    if (req <= 0)
+                    {
+                        continue;
+                    }
+                    var terms = new List<LinearExpr>();
+                    foreach (int i in active)
+                    {
+                        int a = materials[i].Attrs[d];
+                        if (a == 0)
+                        {
+                            continue;
+                        }
+                        terms.Add(LinearExpr.Term(yangVar[i], a));
+                        terms.Add(LinearExpr.Term(yinVar[i], -a));
+                    }
+                    terms.Add(LinearExpr.Term(levelVar[r], -req));
+                    model.Add(LinearExpr.Sum(terms) >= -bonus[d]);
+                }
+                int w = rune.Weight != 0 ? rune.Weight : rune.DefaultWeight;
+                if (mode == EquipmentMode.MaxGrade)
+                {
+                    objTerms.Add(LinearExpr.Term(levelVar[r], w));
+                }
+                else if (mode == EquipmentMode.MaxRuneLevel)
+                {
+                    bool pri = priority != null && r < priority.Length && priority[r];
+                    objTerms.Add(LinearExpr.Term(levelVar[r], pri ? 10000 : 1));
+                }
+            }
+            if (mode == EquipmentMode.MaxAttr)
+            {
+                var terms = new List<LinearExpr>();
+                foreach (int i in active)
+                {
+                    int a = materials[i].Attrs[targetAttr];
+                    if (a == 0)
+                    {
+                        continue;
+                    }
+                    terms.Add(LinearExpr.Term(yangVar[i], a));
+                    terms.Add(LinearExpr.Term(yinVar[i], -a));
+                }
+                model.Maximize(LinearExpr.Sum(terms));
+            }
+            else
+            {
+                model.Maximize(LinearExpr.Sum(objTerms));
+            }
+            var solver = new CpSolver();
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}";
+            var status = solver.Solve(model);
+            if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
+            {
+                return null;
+            }
+            var items = new List<(Material mat, Side side)>();
+            foreach (int i in active)
+            {
+                int vy = (int)solver.Value(yangVar[i]);
+                int vn = (int)solver.Value(yinVar[i]);
+                for (int k = 0; k < vy; k++)
+                {
+                    items.Add((materials[i], Side.Yang));
+                }
+                for (int k = 0; k < vn; k++)
+                {
+                    items.Add((materials[i], Side.Yin));
+                }
+            }
+            return items;
+        }
+
         public static EquipmentSolution PackItems(List<Material> materials, Grid yang, Grid yin, List<(Material mat, Side side)> items, int packTimeMs)
         {
             var sol = new EquipmentSolution();

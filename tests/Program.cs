@@ -461,5 +461,61 @@ if (Environment.GetEnvironmentVariable("CMP") != null)
     }
 }
 
+// 9. 对比：最高品阶/指定属性最大/指定符文优先（等级建模 CP-SAT vs 启发式）
+if (Environment.GetEnvironmentVariable("CMP2") != null)
+{
+    var m361 = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, 99)).ToList();
+    long ObjOf(EquipmentSolution s, EquipmentMode m, int ta, bool[] pri)
+    {
+        if (s == null || s.Runes == null)
+        {
+            return -1;
+        }
+        if (m == EquipmentMode.MaxGrade) return s.Runes.GradeScore;
+        if (m == EquipmentMode.MaxAttr) return s.Runes.FinalAttrs[ta];
+        long p = 0;
+        for (int i = 0; i < s.Runes.Level.Length; i++) if (pri != null && i < pri.Length && pri[i]) p += s.Runes.Level[i];
+        return p;
+    }
+    foreach (var mode in new[] { EquipmentMode.MaxGrade, EquipmentMode.MaxAttr, EquipmentMode.MaxRuneLevel })
+    {
+        int ta = 0;
+        Console.WriteLine($"===== 对比·{mode} =====");
+        Console.WriteLine($"{"用例",-14} {"符文",-3} {"启发式目标",-9} {"启发式ms",-7} {"CP目标",-7} {"CPms",-6} {"装填"}");
+        foreach (var (name, ids) in EquipmentTestCases())
+        {
+            var runes = allRunes.Where(r => ids.Contains(r.Id)).ToList();
+            var priority = Enumerable.Range(0, runes.Count).Select(i => i < (runes.Count + 1) / 2).ToArray();
+            var req = new EquipmentRequest { Materials = m361, Runes = runes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = mode, TimeLimitMs = 3000, TopK = 1, TargetAttr = ta, Priority = priority };
+            var h = new EquipmentSolver(req).Solve();
+            long hObj = ObjOf(h.Best, mode, ta, priority);
+            var sw = new System.Diagnostics.Stopwatch();
+            sw.Start();
+            var cpItems = CpSatSolver.SolveLeveled(m361, runes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), 10.0, mode, ta, priority);
+            sw.Stop();
+            long cpObj = -1;
+            string cpPack = "无解";
+            if (cpItems != null)
+            {
+                var sol = CpSatSolver.PackItems(m361, new Grid(10, 10), new Grid(9, 10), cpItems, 500);
+                if (sol == null)
+                {
+                    cpPack = "装不下";
+                }
+                else
+                {
+                    cpPack = "OK";
+                    var eval = new RuneEvaluator(runes, new int[Attr.Count]);
+                    var rr = eval.Evaluate(sol.Placements);
+                    if (mode == EquipmentMode.MaxGrade) cpObj = rr.GradeScore;
+                    else if (mode == EquipmentMode.MaxAttr) cpObj = rr.FinalAttrs[ta];
+                    else { long p = 0; for (int i = 0; i < rr.Level.Length; i++) if (priority[i]) p += rr.Level[i]; cpObj = p; }
+                }
+            }
+            Console.WriteLine($"{name,-14} {runes.Count,-3} {hObj,-9} {h.ElapsedMs,-7} {cpObj,-7} {sw.ElapsedMilliseconds,-6} {cpPack}");
+        }
+    }
+}
+
 Console.WriteLine(failures == 0 ? "复核全部通过" : $"复核失败 {failures} 个");
 return failures == 0 ? 0 : 1;
