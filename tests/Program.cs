@@ -377,5 +377,57 @@ if (Environment.GetEnvironmentVariable("CPSAT") != null)
     Console.WriteLine($"[CP-SAT·全311单符文] 成功{ok}/{n} 不可行{infeas} 平均数量{totalQ / Math.Max(1, n)}ms 最慢数量{maxQ}ms 最慢装填{maxP}ms 最慢合计{maxTotal}ms");
 }
 
+// 6. 用真实库存跑飞剑5（品阶门槛 vs CP-SAT）
+if (Environment.GetEnvironmentVariable("INV") != null)
+{
+    Console.WriteLine("===== 真实库存·飞剑5 对比 =====");
+    var invPath = Path.Combine(dir, "inventory.json");
+    var inv = JsonDocument.Parse(File.ReadAllText(invPath)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+    var invMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, inv.TryGetValue(m.Id, out var c) ? c : 0)).ToList();
+    var flyIds = new[] { "216", "266", "223", "234", "307", "143", "105" };
+    var flyRunes = allRunes.Where(r => flyIds.Contains(r.Id)).ToList();
+    var fr = new EquipmentRequest { Materials = invMats, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.LowGrade, TimeLimitMs = 3000, TopK = 1 };
+    var fres = new EquipmentSolver(fr).Solve();
+    Console.WriteLine($"[品阶门槛·真实库存] 解 {fres.Solutions.Count} 个，{fres.ElapsedMs}ms，{(fres.Message ?? "")}");
+    foreach (var s in fres.Solutions)
+    {
+        Console.WriteLine($"  {s.PieceCount}件 价{s.Price} 等级[{string.Join(",", s.Runes.Level)}] 复核 {(EquipmentSolver.Verify(fr, s) ?? "OK")}");
+        foreach (var g in s.Placements.GroupBy(p => p.Material).OrderByDescending(g => g.Key.Price))
+        {
+            Console.WriteLine($"    {g.Key.Id} 价{g.Key.Price} attrs=[{string.Join(",", g.Key.Attrs)}] ×{g.Count()}");
+        }
+    }
+    var cp = CpSatSolver.Solve(invMats, flyRunes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), 10.0);
+    Console.WriteLine($"[CP-SAT·真实库存] {cp.Message} 价{cp.TotalPrice} 件{cp.PieceCount} 数量{cp.QuantityMs}ms");
+    foreach (var g in cp.Items.GroupBy(x => x.mat).OrderByDescending(g => g.Key.Price))
+    {
+        Console.WriteLine($"    {g.Key.Id} 价{g.Key.Price} attrs=[{string.Join(",", g.Key.Attrs)}] ×{g.Count()}");
+    }
+}
+
+// 7. P1 修复反例测试
+if (Environment.GetEnvironmentVariable("P1FIX") != null)
+{
+    Console.WriteLine("===== P1 修复反例 =====");
+    Material SM(string id, int[] attrs, int grade, int price) => new Material { Id = id, Name = id, Attrs = attrs, Shape = new List<Cell> { new Cell(0, 0) }, Stock = 99, Grade = grade, Price = price };
+    // P1-1: 仅金+1材料，符文需金1，指定火 → 应无解（不能把金当火）
+    var r1 = new List<Rune> { new Rune { Id = "r", Name = "r", Requirement = new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, MaxStacks = 1 } };
+    var q1 = new EquipmentRequest { Materials = new List<Material> { SM("金", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1, 1) }, Runes = r1, Yang = new Grid(3, 3), Yin = new Grid(3, 3), Mode = EquipmentMode.MaxAttr, TargetAttr = 3, TimeLimitMs = 2000, TopK = 1 };
+    var s1 = new EquipmentSolver(q1).Solve();
+    Console.WriteLine($"[P1-1 MaxAttr指定火无火] 解{s1.Solutions.Count}个 {(s1.Solutions.Count == 0 ? "✓ 正确无解" : "✗ 错误返回金")}");
+    // P1-2: 阳2格，金3水3上限10，L(阶1金3水3)/G(阶2金15)/W(阶2水15) → 应选 L 一件
+    var r2 = new List<Rune> { new Rune { Id = "r", Name = "r", Requirement = new[] { 3, 3, 0, 0, 0, 0, 0, 0 }, MaxStacks = 10 } };
+    var q2 = new EquipmentRequest { Materials = new List<Material> { SM("L", new[] { 3, 3, 0, 0, 0, 0, 0, 0 }, 1, 1), SM("G", new[] { 15, 0, 0, 0, 0, 0, 0, 0 }, 2, 1), SM("W", new[] { 0, 15, 0, 0, 0, 0, 0, 0 }, 2, 1) }, Runes = r2, Yang = new Grid(2, 1), Yin = new Grid(1, 1), Mode = EquipmentMode.MinPieces, TimeLimitMs = 2000, TopK = 1 };
+    var s2 = new EquipmentSolver(q2).Solve();
+    var b2 = s2.Best;
+    Console.WriteLine($"[P1-2 最少材料一层解] 件数{(b2 != null ? b2.PieceCount : 0)} {(b2 != null && b2.PieceCount == 1 ? "✓ 1件正确" : "✗ 未找到1件解")}");
+    // P1-3: 指定符文优先，优先金+普通火各需1上限3，材料 A(金2火1阶2价10)/B(金1火2阶1价100)；优先金等级不应低于火
+    var r3 = new List<Rune> { new Rune { Id = "金", Name = "金", Requirement = new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, MaxStacks = 3 }, new Rune { Id = "火", Name = "火", Requirement = new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, MaxStacks = 3 } };
+    var q3 = new EquipmentRequest { Materials = new List<Material> { SM("A", new[] { 2, 0, 0, 1, 0, 0, 0, 0 }, 2, 10), SM("B", new[] { 1, 0, 0, 2, 0, 0, 0, 0 }, 1, 100) }, Runes = r3, Yang = new Grid(3, 3), Yin = new Grid(3, 3), Mode = EquipmentMode.MaxRuneLevel, Priority = new[] { true, false }, TimeLimitMs = 2000, TopK = 1 };
+    var s3 = new EquipmentSolver(q3).Solve();
+    var b3 = s3.Best;
+    if (b3 != null) { int g = b3.Runes.Level[0], f = b3.Runes.Level[1]; Console.WriteLine($"[P1-3 指定符文优先] 金{g} 火{f} {(g >= f ? "✓ 优先不低" : "✗ 优先被破坏")}"); }
+}
+
 Console.WriteLine(failures == 0 ? "复核全部通过" : $"复核失败 {failures} 个");
 return failures == 0 ? 0 : 1;

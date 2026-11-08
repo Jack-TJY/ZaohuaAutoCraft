@@ -892,12 +892,12 @@ namespace ZaohuaAutoCraft.Solver
             void Record()
             {
                 var p = PackItems(items);
-                if (p != null)
+                if (p != null && RuneEvaluator.ItemAttrOf(eval.SumAttrs(p.Placements)) == ta)
                 {
                     results.Add(p);
                 }
             }
-            Record(); // 基座本身总是有效解
+            Record(); // 基座只有达到目标属性才算有效解
 
             while (clock.ElapsedMilliseconds < deadline && StepMaxAttr(items, stockLeft, area, ref attrs, ta))
             {
@@ -906,7 +906,7 @@ namespace ZaohuaAutoCraft.Solver
 
             // 结果复查：移除冗余材料（尤其多余的目标属性材料），再尝试继续提级
             var rechecked = RecheckMaxAttr(items, ta);
-            if (rechecked != null)
+            if (rechecked != null && RuneEvaluator.ItemAttrOf(eval.SumAttrs(rechecked.Placements)) == ta)
             {
                 results.Add(rechecked);
             }
@@ -1129,7 +1129,16 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 return new List<EquipmentSolution>();
             }
-            int floor = MinGrade(MaxLevelTarget());
+            int floor;
+            if (mode == EquipmentMode.MinPieces || mode == EquipmentMode.MaxActiveRunes)
+            {
+                // 这两种模式只需满足一层，用一层目标估算品阶下限，不能用满层目标（否则会误删低阶的一件解）
+                floor = MinGrade(TargetOf(req.Runes, _ => 1));
+            }
+            else
+            {
+                floor = MinGrade(MaxLevelTarget());
+            }
             if (floor > int.MinValue)
             {
                 BuildUnits(int.MaxValue, floor);
@@ -1165,8 +1174,8 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>去浪费：把方案里每件材料尝试原位替换成「同形状、仍满足目标、但品阶/价值更低」的材料。</summary>
         EquipmentSolution ReduceWaste(EquipmentSolution sol, EquipmentMode mode)
         {
-            var baseR = sol.Runes;
             int ta = Math.Max(0, req.TargetAttr);
+            var baseKey = RankKey(sol, mode);
             var placements = sol.Placements.ToList();
             var stockLeft = req.Materials.ToDictionary(m => m, m => m.Stock);
             foreach (var p in placements)
@@ -1208,10 +1217,11 @@ namespace ZaohuaAutoCraft.Solver
                         }
                         var tmp = placements.ToList();
                         tmp[i] = new Placement { Material = m, Side = p.Side, X = p.X, Y = p.Y, Rotate = p.Rotate };
-                        var nr = eval.Evaluate(eval.SumAttrs(tmp));
-                        if (nr.ActiveCount < baseR.ActiveCount || nr.TotalLevel < baseR.TotalLevel)
+                        var cand = new EquipmentSolution { Placements = tmp };
+                        Finalize(cand);
+                        if (CompareRank(RankKey(cand, mode), baseKey) > 0)
                         {
-                            continue;
+                            continue; // 替换后整体目标变差（含指定符文优先）
                         }
                         if (mode == EquipmentMode.MaxAttr)
                         {
@@ -1373,9 +1383,11 @@ namespace ZaohuaAutoCraft.Solver
                 var reduced = ReduceWaste(top[i], mode);
                 if (reduced != null)
                 {
+                    Finalize(reduced);
                     top[i] = reduced;
                 }
             }
+            top.Sort((x, y) => CompareRank(RankKey(x, mode), RankKey(y, mode)));
             return top;
         }
 
@@ -1451,6 +1463,10 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     return $"符文 {req.Runes[i].Id} 等级不一致";
                 }
+            }
+            if (req.Mode == EquipmentMode.MaxAttr && req.TargetAttr >= 0 && RuneEvaluator.ItemAttrOf(expect.FinalAttrs) != req.TargetAttr)
+            {
+                return $"目标属性未达成（{Attr.Names[req.TargetAttr]}）";
             }
             return null;
         }
