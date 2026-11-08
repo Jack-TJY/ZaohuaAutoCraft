@@ -320,18 +320,19 @@ namespace ZaohuaAutoCraft.Solver
             else if (mode == EquipmentMode.MaxBatches)
             {
                 // 目标：max 等级(2000001) > max 次数(200) > min 件数(1)
-                long minStock = active.Count > 0 ? active.Min(i => Math.Min(materials[i].Stock, 10000L)) : 1;
-                if (minStock < 1)
+                // 批次数上界用「最大库存」而非「最小库存」：未使用材料的库存不应压低次数（报告§6.2）
+                long maxStock = active.Count > 0 ? active.Max(i => Math.Min(materials[i].Stock, 100000L)) : 1;
+                if (maxStock < 1)
                 {
-                    minStock = 1;
+                    maxStock = 1;
                 }
-                var bVar = model.NewIntVar(1, minStock, "batches");
+                var bVar = model.NewIntVar(1, maxStock, "batches");
                 foreach (int i in active)
                 {
                     long cap = Math.Min(materials[i].Stock, 10000L);
                     var usageVar = model.NewIntVar(0, cap, $"u{i}");
                     model.Add(usageVar == yangVar[i] + yinVar[i]);
-                    var prod = model.NewIntVar(0, minStock * cap, $"p{i}");
+                    var prod = model.NewIntVar(0, maxStock, $"p{i}");
                     model.AddMultiplicationEquality(prod, bVar, usageVar);
                     model.Add(prod <= materials[i].Stock);
                 }

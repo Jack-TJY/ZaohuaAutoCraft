@@ -44,6 +44,16 @@ namespace ZaohuaAutoCraft.Solver
         MaxAttr
     }
 
+    /// <summary>材料策略：在符文质量确定后如何取舍材料。</summary>
+    public enum MaterialPolicy
+    {
+        /// <summary>同一摆法可重复炼制次数最多。</summary>
+        MaxRepeatCount,
+
+        /// <summary>低阶材料优先（品阶数量向量按从高到低字典序最小）。</summary>
+        LowGradeFirst
+    }
+
     public class EquipmentRequest
     {
         public List<Material> Materials = new List<Material>();
@@ -71,6 +81,12 @@ namespace ZaohuaAutoCraft.Solver
 
         /// <summary>MaxRuneLevel 模式：与 Runes 对齐的「优先符文」标记（优先符文尽量满级）。</summary>
         public bool[] Priority;
+
+        /// <summary>统一流程：与 Runes 对齐的优先级组号（0=最高优先，依次往后；null 或全相同=全部同组）。</summary>
+        public int[] PriorityGroup;
+
+        /// <summary>统一流程：材料策略（符文质量确定后再优化）。</summary>
+        public MaterialPolicy MaterialPolicy = MaterialPolicy.MaxRepeatCount;
 
         /// <summary>MaxAttr 模式：目标属性维度（0–7），-1 表示未指定。</summary>
         public int TargetAttr = -1;
