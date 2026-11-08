@@ -104,7 +104,7 @@ namespace ZaohuaAutoCraft.Solver
                 result.Message = anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文" + ShortfallText());
                 result.FoundComboButNoFit = anyNoFit;
             }
-            result.Status = sols.Count > 0 ? (solvePath == "CP-SAT" ? "CP-SAT" : "启发式") : (timedOut ? "未定（超时）" : "已证无解");
+            result.Status = sols.Count > 0 ? (string.IsNullOrEmpty(solvePath) ? "启发式" : solvePath) : (timedOut ? "未定（超时）" : "已证无解");
             result.CombosTried = combosTried;
             return Finish(result);
         }
@@ -1227,6 +1227,40 @@ namespace ZaohuaAutoCraft.Solver
             }
         }
 
+        /// <summary>统一流程：CP-SAT 求解（优先级组+可选属性+材料策略），装不下时加形状切割重求。</summary>
+        List<EquipmentSolution> SolveCpSatUnified()
+        {
+            try
+            {
+                var cuts = new List<CpSatQuantity.ShapeCut>();
+                for (int iter = 0; iter < 3; iter++)
+                {
+                    double remainSec = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
+                    var items = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cuts);
+                    if (items == null || items.Count == 0)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    var sol = PackItems(items);
+                    if (sol != null)
+                    {
+                        return new List<EquipmentSolution> { sol };
+                    }
+                    var cut = FailingShapeCut(items);
+                    if (cut == null)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    cuts.Add(cut);
+                }
+                return new List<EquipmentSolution>();
+            }
+            catch
+            {
+                return new List<EquipmentSolution>();
+            }
+        }
+
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
         List<EquipmentSolution> FindBase(EquipmentMode mode)
         {
@@ -1478,6 +1512,26 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
         List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
         {
+            if (req.Unified)
+            {
+                var cu = SolveCpSatUnified();
+                if (cu.Count > 0)
+                {
+                    solvePath = "CP-SAT(统一)";
+                    return cu;
+                }
+                // 统一流程失败：回退到启发式（按优先级组提级）
+                mode = EquipmentMode.MaxRuneLevel;
+                if (req.Priority == null || req.Priority.Length != req.Runes.Count)
+                {
+                    var pri = new bool[req.Runes.Count];
+                    for (int i = 0; i < pri.Length; i++)
+                    {
+                        pri[i] = req.PriorityGroup == null || i >= req.PriorityGroup.Length || req.PriorityGroup[i] == 0;
+                    }
+                    req.Priority = pri;
+                }
+            }
             // 最少材料 / 指定符文优先 / 最多炼制次数 / 最大属性：先试 CP-SAT 等级建模（已证实启发式非最优）
             if (mode == EquipmentMode.MinPieces || mode == EquipmentMode.MaxRuneLevel || mode == EquipmentMode.MaxBatches || mode == EquipmentMode.MaxAttr)
             {

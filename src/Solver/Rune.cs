@@ -88,6 +88,9 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>统一流程：材料策略（符文质量确定后再优化）。</summary>
         public MaterialPolicy MaterialPolicy = MaterialPolicy.MaxRepeatCount;
 
+        /// <summary>启用统一流程（忽略旧 Mode，使用优先级组+可选属性+材料策略）。</summary>
+        public bool Unified;
+
         /// <summary>MaxAttr 模式：目标属性维度（0–7），-1 表示未指定。</summary>
         public int TargetAttr = -1;
 

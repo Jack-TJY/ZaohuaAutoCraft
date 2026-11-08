@@ -420,6 +420,24 @@ if (Want("equip"))
         for (int i = 1; i < groups.Length; i++) groups[i] = 1;
         ShowUnified("组优先·火·最多次数", groups, 3, MaterialPolicy.MaxRepeatCount);
     }
+
+    // 诊断：统一流程（生产路径 Unified=true）
+    {
+        void ShowFlow(string label, int[] groups, int attr, MaterialPolicy pol)
+        {
+            var req = new EquipmentRequest { Materials = equipAll, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Unified = true, TargetAttr = attr, PriorityGroup = groups, MaterialPolicy = pol, TimeLimitMs = 10000, TopK = 1 };
+            var res = new EquipmentSolver(req).Solve();
+            if (res.Solutions.Count == 0) { Console.WriteLine($"[统一流程·{label}] 无解 {res.Message}"); return; }
+            var s = res.Solutions[0];
+            Console.WriteLine($"[统一流程·{label}] {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 属性={s.Runes.ItemAttr} 批次{s.Batches} 状态{res.Status} 复核{(EquipmentSolver.Verify(req, s) ?? "OK")}");
+        }
+        ShowFlow("不指定·最多次数", null, -1, MaterialPolicy.MaxRepeatCount);
+        ShowFlow("火·最多次数", null, 3, MaterialPolicy.MaxRepeatCount);
+        ShowFlow("火·低阶优先", null, 3, MaterialPolicy.LowGradeFirst);
+        var g2 = new int[flyRunes.Count];
+        for (int i = 1; i < g2.Length; i++) g2[i] = 1;
+        ShowFlow("优先首符文·火·最多次数", g2, 3, MaterialPolicy.MaxRepeatCount);
+    }
 }
 
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）

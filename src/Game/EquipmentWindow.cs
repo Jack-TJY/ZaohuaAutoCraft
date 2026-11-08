@@ -262,64 +262,54 @@ namespace ZaohuaAutoCraft
             {
                 priority = new bool[runes.Count];
             }
-            bool priMode = Plugin.EquipmentMode.Value == EquipmentMode.MaxRuneLevel;
+            GUILayout.Label("符文优先级（勾选=优先组，可多选；未勾选=较低优先组）：");
             for (int i = 0; i < runes.Count; i++)
             {
                 var r = runes[i];
-                if (priMode)
-                {
-                    GUILayout.BeginHorizontal();
-                    bool oldPri = priority[i];
-                    priority[i] = GUILayout.Toggle(priority[i], "优先", GUILayout.Width(56));
-                    if (priority[i] != oldPri)
-                    {
-                        result = null;
-                        chosen = 0;
-                        applied = null;
-                        status = "";
-                    }
-                    GUILayout.Label($"{r.Name}  要求 {Game.DrugBridge.AttrText(r.Requirement)}  满级 {r.MaxStacks}");
-                    GUILayout.EndHorizontal();
-                }
-                else
-                {
-                    GUILayout.Label($"{r.Name}  要求 {Game.DrugBridge.AttrText(r.Requirement)}  满级 {r.MaxStacks}");
-                }
-            }
-            GUILayout.EndScrollView();
-
-            int mode = Array.IndexOf(ModeValues, Plugin.EquipmentMode.Value);
-            if (mode < 0)
-            {
-                mode = 2; // 兼容旧配置里的 MaxActiveRunes 等值，落到「最低品阶」
-                Plugin.EquipmentMode.Value = ModeValues[2];
-            }
-            int newMode = GUILayout.SelectionGrid(mode, ModeNames, 3);
-            if (newMode != mode)
-            {
-                Plugin.EquipmentMode.Value = ModeValues[newMode];
-                result = null;
-                chosen = 0;
-                applied = null;
-                status = "";
-                allowPartial = false;
-            }
-            if (ModeValues[newMode] == EquipmentMode.MaxAttr)
-            {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("目标属性", GUILayout.Width(64));
-                int ta = Mathf.Clamp(Plugin.EquipmentTargetAttr.Value, 0, Attr.Names.Length - 1);
-                int nta = GUILayout.SelectionGrid(ta, Attr.Names, 8);
-                if (nta != ta)
+                bool oldPri = priority[i];
+                priority[i] = GUILayout.Toggle(priority[i], "优先", GUILayout.Width(56));
+                if (priority[i] != oldPri)
                 {
-                    Plugin.EquipmentTargetAttr.Value = nta;
                     result = null;
                     chosen = 0;
                     applied = null;
                     status = "";
                 }
+                GUILayout.Label($"{r.Name}  要求 {Game.DrugBridge.AttrText(r.Requirement)}  满级 {r.MaxStacks}");
                 GUILayout.EndHorizontal();
             }
+            GUILayout.EndScrollView();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("法宝属性", GUILayout.Width(64));
+            int attrIdx = Mathf.Clamp(Plugin.EquipmentTargetAttr.Value, -1, Attr.Names.Length - 1);
+            var attrNames = new List<string> { "不指定" };
+            attrNames.AddRange(Attr.Names);
+            int nAttr = GUILayout.SelectionGrid(attrIdx + 1, attrNames.ToArray(), 9);
+            if (nAttr - 1 != attrIdx)
+            {
+                Plugin.EquipmentTargetAttr.Value = nAttr - 1;
+                result = null;
+                chosen = 0;
+                applied = null;
+                status = "";
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("材料策略", GUILayout.Width(64));
+            int pol = (int)Plugin.EquipmentMaterialPolicy.Value;
+            int nPol = GUILayout.SelectionGrid(pol, new[] { "最多炼制次数", "低阶材料优先" }, 2);
+            if (nPol != pol)
+            {
+                Plugin.EquipmentMaterialPolicy.Value = (MaterialPolicy)nPol;
+                result = null;
+                chosen = 0;
+                applied = null;
+                status = "";
+            }
+            GUILayout.EndHorizontal();
             GUILayout.Label("最长计算时间（秒）：");
             int sec = Mathf.Max(1, Plugin.EquipmentTimeLimitMs.Value / 1000);
             GUILayout.BeginHorizontal();
@@ -339,7 +329,7 @@ namespace ZaohuaAutoCraft
             if (runes.Count > 0)
             {
                 GUI.enabled = running == null;
-                if (GUILayout.Button(running == null ? $"计算摆法（{ModeNames[newMode]}）" : "计算中…", GUILayout.Height(28)))
+                if (GUILayout.Button(running == null ? "计算摆法" : "计算中…", GUILayout.Height(28)))
                 {
                     StartSolve();
                     GUIUtility.ExitGUI();
@@ -348,7 +338,7 @@ namespace ZaohuaAutoCraft
             }
             GUILayout.Label(status + (result?.Status != null ? $"  [{result.Status}]" : ""));
 
-            if (result != null && result.Best == null && Plugin.EquipmentMode.Value == EquipmentMode.MaxAttr && !allowPartial)
+            if (result != null && result.Best == null && !allowPartial && Plugin.EquipmentTargetAttr.Value >= 0)
             {
                 if (GUILayout.Button("查看部分达成备选（放弃部分符文）", GUILayout.Height(26)))
                 {
@@ -413,6 +403,20 @@ namespace ZaohuaAutoCraft
                     status = "请先在炼器界面勾选符文";
                     return;
                 }
+                var pg = new int[runes.Count];
+                bool anyPri = false;
+                for (int i = 0; i < runes.Count; i++)
+                {
+                    if (priority.Length == runes.Count && priority[i])
+                    {
+                        anyPri = true;
+                    }
+                }
+                for (int i = 0; i < runes.Count; i++)
+                {
+                    bool p = priority.Length == runes.Count && priority[i];
+                    pg[i] = anyPri && !p ? 1 : 0;
+                }
                 request = new EquipmentRequest
                 {
                     Materials = Game.EquipmentBridge.GetMaterials(),
@@ -420,10 +424,11 @@ namespace ZaohuaAutoCraft
                     Bonus = bonus,
                     Yang = new Grid(furnace.yangGridSize.x, furnace.yangGridSize.y),
                     Yin = new Grid(furnace.yinGridSize.x, furnace.yinGridSize.y),
-                    Mode = Plugin.EquipmentMode.Value,
+                    Unified = true,
                     TimeLimitMs = Plugin.EquipmentTimeLimitMs.Value,
                     TargetAttr = Plugin.EquipmentTargetAttr.Value,
-                    Priority = priority.Length == runes.Count ? priority : new bool[runes.Count],
+                    PriorityGroup = pg,
+                    MaterialPolicy = Plugin.EquipmentMaterialPolicy.Value,
                     AllowPartial = allowPartial,
                     TopK = 3,
                 };
