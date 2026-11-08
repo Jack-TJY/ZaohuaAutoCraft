@@ -21,7 +21,7 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>返回阳/阴件数方案（材料引用 + 侧）；无解或超时返回 null。</summary>
         public static List<(Material mat, Side side)> Solve(
             List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin, double timeLimitSec,
-            List<ShapeCut> cuts = null)
+            List<ShapeCut> cuts = null, bool minPieces = false)
         {
             var need = new int[Attr.Count];
             var required = new bool[Attr.Count];
@@ -118,10 +118,18 @@ namespace ZaohuaAutoCraft.Solver
                 }
             }
 
-            // 目标：min 总价（主），同价下 min 件数（次，权重放大价格使价格优先）
-            model.Minimize(LinearExpr.Sum(active.Select(i =>
-                LinearExpr.Term(yangVar[i], 1000L * materials[i].Price + 1) +
-                LinearExpr.Term(yinVar[i], 1000L * materials[i].Price + 1))));
+            if (minPieces)
+            {
+                // 目标：min 总件数（最少材料模式）
+                model.Minimize(LinearExpr.Sum(active.Select(i => LinearExpr.Term(yangVar[i], 1) + LinearExpr.Term(yinVar[i], 1))));
+            }
+            else
+            {
+                // 目标：min 总价（主），同价下 min 件数（次，权重放大价格使价格优先）
+                model.Minimize(LinearExpr.Sum(active.Select(i =>
+                    LinearExpr.Term(yangVar[i], 1000L * materials[i].Price + 1) +
+                    LinearExpr.Term(yinVar[i], 1000L * materials[i].Price + 1))));
+            }
 
             var solver = new CpSolver();
             solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}";
