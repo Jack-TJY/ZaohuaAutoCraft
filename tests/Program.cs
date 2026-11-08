@@ -206,7 +206,7 @@ void RunEquip(string label, Func<Material, long> stockOf, Grid yang, Grid yin, E
         }
         else if (res.TimedOut) { timeout++; if (Environment.GetEnvironmentVariable("VERBOSE") != null) Console.WriteLine($"  超时 符文 {r.Id} 组合 {res.CombosTried}"); }
         else if (res.FoundComboButNoFit) noFit++;
-        else none++;
+        else { none++; if (Environment.GetEnvironmentVariable("VERBOSE") != null) Console.WriteLine($"  无解 符文 {r.Id} 要求 {string.Join(",", r.Requirement)} 满级{r.MaxStacks}"); }
     }
     Console.WriteLine($"[炼器·{label}] 成功 {ok} / 无解 {none} / 装不下 {noFit} / 超时 {timeout}；平均 {totalMs / Math.Max(1, allRunes.Count)} ms，最慢 {maxMs} ms（符文 {slowest}）");
 }
@@ -299,12 +299,15 @@ if (Want("equip"))
 {
     if (Environment.GetEnvironmentVariable("MINI") == null)
     {
-        RunEquip("全材料·大锤·最少材料", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MinPieces, 2000);
-        RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
-        RunEquip("全材料·大锤·指定符文优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
-        RunEquip("全材料·大锤·最低品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
-        RunEquip("全材料·大锤·最多炼制次数", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxBatches, 2000, requireActive: false);
-        RunEquip("全材料·大锤·最大属性(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 2000, targetAttr: 0, requireActive: false);
+        if (Environment.GetEnvironmentVariable("MAONLY") == null)
+        {
+            RunEquip("全材料·大锤·最少材料", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MinPieces, 2000);
+            RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
+            RunEquip("全材料·大锤·指定符文优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
+            RunEquip("全材料·大锤·最低品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
+            RunEquip("全材料·大锤·最多炼制次数", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxBatches, 2000, requireActive: false);
+        }
+        RunEquip("全材料·大锤·最大属性(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 3000, targetAttr: 0, requireActive: false);
     }
     // 多符文·满足最多符文
     var multiRunes = allRunes.Take(5).ToList();
@@ -383,6 +386,19 @@ if (Want("equip"))
             Console.WriteLine($"[确定性·MaxRuneLevel #{k}] {fres.ElapsedMs}ms {sig}");
         }
         Console.WriteLine(sigs.Distinct().Count() == 1 ? "[确定性] 3次一致 ✓" : "[确定性] 3次不一致 ✗");
+    }
+
+    // 诊断：高需求符文 127/227/261 在 MaxAttr(金) 下，给足时间是否可行
+    foreach (var rid2 in new[] { "127", "227", "261" })
+    {
+        var rr = allRunes.FirstOrDefault(x => x.Id == rid2);
+        if (rr == null)
+        {
+            continue;
+        }
+        var req2 = new EquipmentRequest { Materials = equipAll, Runes = new List<Rune> { rr }, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxAttr, TargetAttr = 0, TimeLimitMs = 5000, TopK = 1 };
+        var res2 = new EquipmentSolver(req2).Solve();
+        Console.WriteLine($"[诊断·符文{rid2}·MaxAttr金] 解{res2.Solutions.Count}个 {res2.ElapsedMs}ms {(res2.Solutions.Count > 0 ? $"等级[{string.Join(",", res2.Solutions[0].Runes.Level)}] ItemAttr={res2.Solutions[0].Runes.ItemAttr}" : res2.Message)}");
     }
 }
 

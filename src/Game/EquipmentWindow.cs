@@ -464,8 +464,18 @@ namespace ZaohuaAutoCraft
                 if (applied != null && active == applied.Runes.ActiveCount)
                 {
                     bool same = CheckLevels(runeDic);
-                    string attrName = attr >= 1 && attr <= 8 ? Attr.Names[attr - 1] : "无";
+                    // 内部 0 按用户确认为默认金（不再显示「无」）
+                    string attrName = attr >= 1 && attr <= 8 ? Attr.Names[attr - 1] : Attr.Names[0];
                     status = $"✓ 游戏已识别，生效符文 {active} 个，法器属性 {attrName}。请点游戏里的「炼制」。";
+                    if (request?.Mode == EquipmentMode.MaxAttr)
+                    {
+                        int actual = attr >= 1 && attr <= 8 ? attr - 1 : 0;
+                        int ta = Math.Max(0, request.TargetAttr);
+                        if (actual != ta)
+                        {
+                            status += $"\n（注意：游戏实际归属 {Attr.Names[actual]}，与目标 {Attr.Names[ta]} 不一致，可能材料不足或炉子/天赋加成影响）";
+                        }
+                    }
                     if (!same)
                     {
                         status += "\n（预测的符文等级和游戏不一致，以游戏为准；请把日志发给作者）";

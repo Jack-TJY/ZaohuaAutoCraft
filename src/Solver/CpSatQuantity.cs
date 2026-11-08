@@ -273,7 +273,15 @@ namespace ZaohuaAutoCraft.Solver
                                 domTerms.Add(LinearExpr.Term(yinVar[i], aD));
                             }
                         }
-                        long rhsConst = (ta != 0 ? 1L : 0L) + (long)bonus[d] * wD - (long)bonus[ta] * wTa;
+                        long delta = 0;
+                        if (ta != 0)
+                        {
+                            // 贴近游戏归属：d<目标 需严格领先（否则目标压不过前面的最大值）；
+                            // d>目标且是加权维度(冰/风/雷×10)时允许并列（并列不归金）；其余（非加权）并列归金，需严格
+                            bool weightedD = d >= 5;
+                            delta = (d < ta || !weightedD) ? 1L : 0L;
+                        }
+                        long rhsConst = delta + (long)bonus[d] * wD - (long)bonus[ta] * wTa;
                         model.Add(LinearExpr.Sum(domTerms) >= rhsConst);
                     }
                 }
