@@ -429,32 +429,36 @@ if (Environment.GetEnvironmentVariable("P1FIX") != null)
     if (b3 != null) { int g = b3.Runes.Level[0], f = b3.Runes.Level[1]; Console.WriteLine($"[P1-3 指定符文优先] 金{g} 火{f} {(g >= f ? "✓ 优先不低" : "✗ 优先被破坏")}"); }
 }
 
-// 8. 对比：最少材料 启发式 vs CP-SAT
+// 通用炼器测试集：不同符文数量 × 不同需求量级（低/中/高），所有对比/回归测试共用
+(string name, string[] runeIds)[] EquipmentTestCases() => new[]
+{
+    ("单符文·低阶", new[] { "1" }),
+    ("单符文·中阶", new[] { "85" }),
+    ("单符文·高阶", new[] { "307" }),
+    ("双符文·低+高", new[] { "1", "307" }),
+    ("三符文·低中高", new[] { "1", "85", "307" }),
+    ("五符文·混合", new[] { "1", "85", "216", "223", "307" }),
+    ("七符文·飞剑5", new[] { "216", "266", "223", "234", "307", "143", "105" }),
+    ("十符文·混合", new[] { "1", "85", "105", "143", "216", "220", "223", "234", "266", "307" }),
+};
+
+// 8. 对比：最少材料 启发式 vs CP-SAT（通用测试集，含单/多符文）
 if (Environment.GetEnvironmentVariable("CMP") != null)
 {
-    Console.WriteLine("===== 对比·最少材料：启发式 vs CP-SAT =====");
     var m361 = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, 99)).ToList();
-    int cpBetter = 0, same = 0, cpWorse = 0, cpUnpack = 0;
-    long hMs = 0, cMs = 0;
-    var sw = new System.Diagnostics.Stopwatch();
-    foreach (var r in allRunes)
+    Console.WriteLine("===== 对比·最少材料（通用测试集）=====");
+    Console.WriteLine($"{"用例",-14} {"符文",-3} {"启发式件数",-7} {"启发式ms",-7} {"CP件数",-5} {"CP装填"}");
+    foreach (var (name, ids) in EquipmentTestCases())
     {
-        var req = new EquipmentRequest { Materials = m361, Runes = new List<Rune> { r }, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MinPieces, TimeLimitMs = 2000, TopK = 1 };
+        var runes = allRunes.Where(r => ids.Contains(r.Id)).ToList();
+        var req = new EquipmentRequest { Materials = m361, Runes = runes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MinPieces, TimeLimitMs = 3000, TopK = 1 };
         var h = new EquipmentSolver(req).Solve();
-        hMs += h.ElapsedMs;
-        int hp = h.Best?.PieceCount ?? int.MaxValue;
-        sw.Restart();
-        var cpItems = CpSatQuantity.Solve(m361, new List<Rune> { r }, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), 5.0, null, minPieces: true);
-        sw.Stop();
-        cMs += sw.ElapsedMilliseconds;
-        int cp = cpItems?.Count ?? int.MaxValue;
-        if (cpItems == null) { cpWorse++; }
-        else if (CpSatSolver.PackItems(m361, new Grid(10, 10), new Grid(9, 10), cpItems, 500) == null) { cpUnpack++; }
-        else if (cp < hp) cpBetter++;
-        else if (cp == hp) same++;
-        else cpWorse++;
+        int hp = h.Best?.PieceCount ?? -1;
+        var cpItems = CpSatQuantity.Solve(m361, runes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), 10.0, null, minPieces: true);
+        int cp = cpItems?.Count ?? -1;
+        string cpPack = cpItems == null ? "无解" : (CpSatSolver.PackItems(m361, new Grid(10, 10), new Grid(9, 10), cpItems, 500) == null ? "装不下" : "OK");
+        Console.WriteLine($"{name,-14} {runes.Count,-3} {hp,-7} {h.ElapsedMs,-7} {cp,-5} {cpPack}");
     }
-    Console.WriteLine($"[对比·最少材料] CP更优 {cpBetter} / 相同 {same} / CP更差或无解 {cpWorse} / CP装不下 {cpUnpack}；启发式平均 {hMs / allRunes.Count}ms，CP平均 {cMs / allRunes.Count}ms");
 }
 
 Console.WriteLine(failures == 0 ? "复核全部通过" : $"复核失败 {failures} 个");
