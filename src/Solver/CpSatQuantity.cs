@@ -132,7 +132,7 @@ namespace ZaohuaAutoCraft.Solver
             }
 
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:1,random_seed:0";
             var status = solver.Solve(model);
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {
@@ -341,7 +341,7 @@ namespace ZaohuaAutoCraft.Solver
                 model.Maximize(LinearExpr.Sum(objTerms));
             }
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:1,random_seed:0";
             var status = solver.Solve(model);
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {

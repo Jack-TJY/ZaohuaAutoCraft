@@ -297,12 +297,15 @@ if (Want("topup")) Run("补料·随机库存·大炉", r => mats.Select(m => Cop
 // 4. 炼器：单个符文逐个验证（全材料 99 = 最坏搜索量）
 if (Want("equip"))
 {
-    RunEquip("全材料·大锤·最少材料", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MinPieces, 2000);
-    RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
-    RunEquip("全材料·大锤·指定符文优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
-    RunEquip("全材料·大锤·最低品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
-    RunEquip("全材料·大锤·最多炼制次数", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxBatches, 2000, requireActive: false);
-    RunEquip("全材料·大锤·最大属性(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 2000, targetAttr: 0, requireActive: false);
+    if (Environment.GetEnvironmentVariable("MINI") == null)
+    {
+        RunEquip("全材料·大锤·最少材料", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MinPieces, 2000);
+        RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
+        RunEquip("全材料·大锤·指定符文优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
+        RunEquip("全材料·大锤·最低品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
+        RunEquip("全材料·大锤·最多炼制次数", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxBatches, 2000, requireActive: false);
+        RunEquip("全材料·大锤·最大属性(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 2000, targetAttr: 0, requireActive: false);
+    }
     // 多符文·满足最多符文
     var multiRunes = allRunes.Take(5).ToList();
     var multi = new EquipmentRequest { Materials = equipAll, Runes = multiRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxActiveRunes, TimeLimitMs = 3000, TopK = 1 };
@@ -364,6 +367,22 @@ if (Want("equip"))
         {
             Console.WriteLine($"  {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] ItemAttr={s.Runes.ItemAttr} FinalAttrs=[{string.Join(",", s.Runes.FinalAttrs)}] 复核 {(EquipmentSolver.Verify(fr, s) ?? "OK")}");
         }
+    }
+
+    // 诊断：飞剑5 指定符文优先 确定性（同请求跑3次应完全一致，验证 CP-SAT 单线程固定种子）
+    {
+        var priArr = new bool[flyRunes.Count];
+        priArr[2] = true;
+        var sigs = new List<string>();
+        for (int k = 0; k < 3; k++)
+        {
+            var fr = new EquipmentRequest { Materials = equipAll, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxRuneLevel, Priority = priArr, TimeLimitMs = 3000, TopK = 3 };
+            var fres = new EquipmentSolver(fr).Solve();
+            var sig = fres.Solutions.Count == 0 ? "无解" : string.Join(" | ", fres.Solutions.Select(s => $"{s.PieceCount}件[{string.Join(",", s.Runes.Level)}]"));
+            sigs.Add(sig);
+            Console.WriteLine($"[确定性·MaxRuneLevel #{k}] {fres.ElapsedMs}ms {sig}");
+        }
+        Console.WriteLine(sigs.Distinct().Count() == 1 ? "[确定性] 3次一致 ✓" : "[确定性] 3次不一致 ✗");
     }
 }
 
