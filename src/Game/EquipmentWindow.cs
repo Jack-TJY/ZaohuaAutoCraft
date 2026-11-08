@@ -266,7 +266,15 @@ namespace ZaohuaAutoCraft
                 if (priMode)
                 {
                     GUILayout.BeginHorizontal();
+                    bool oldPri = priority[i];
                     priority[i] = GUILayout.Toggle(priority[i], "优先", GUILayout.Width(56));
+                    if (priority[i] != oldPri)
+                    {
+                        result = null;
+                        chosen = 0;
+                        applied = null;
+                        status = "";
+                    }
                     GUILayout.Label($"{r.Name}  要求 {Game.DrugBridge.AttrText(r.Requirement)}  满级 {r.MaxStacks}");
                     GUILayout.EndHorizontal();
                 }
@@ -287,6 +295,10 @@ namespace ZaohuaAutoCraft
             if (newMode != mode)
             {
                 Plugin.EquipmentMode.Value = ModeValues[newMode];
+                result = null;
+                chosen = 0;
+                applied = null;
+                status = "";
             }
             if (ModeValues[newMode] == EquipmentMode.MaxAttr)
             {
@@ -297,6 +309,10 @@ namespace ZaohuaAutoCraft
                 if (nta != ta)
                 {
                     Plugin.EquipmentTargetAttr.Value = nta;
+                    result = null;
+                    chosen = 0;
+                    applied = null;
+                    status = "";
                 }
                 GUILayout.EndHorizontal();
             }
