@@ -629,5 +629,36 @@ if (Environment.GetEnvironmentVariable("CMP2") != null)
     }
 }
 
+// 验收：统一流程关键用例
+if (Environment.GetEnvironmentVariable("UTEST") != null)
+{
+    Console.WriteLine("===== 统一流程验收用例 =====");
+    Material SM2(string id, int[] attrs, int grade, long stock) => new Material { Id = id, Name = id, Attrs = attrs, Shape = new List<Cell> { new Cell(0, 0) }, Stock = stock, Grade = grade, Price = 1 };
+    List<Rune> RR(params (string id, int[] req, int max)[] rs) => rs.Select(x => new Rune { Id = x.id, Name = x.id, Requirement = x.req, MaxStacks = x.max }).ToList();
+    void RunU(string label, List<Material> mats, List<Rune> runes, Grid yang, Grid yin, int attr, Func<EquipmentSolution, bool> check)
+    {
+        var req = new EquipmentRequest { Materials = mats, Runes = runes, Yang = yang, Yin = yin, Unified = true, TargetAttr = attr, TimeLimitMs = 3000, TopK = 1 };
+        var res = new EquipmentSolver(req).Solve();
+        var s = res.Solutions.Count > 0 ? res.Solutions[0] : null;
+        int failuresBefore = failures;
+        bool ok = s != null && check(s) && EquipmentSolver.Verify(req, s) == null;
+        if (!ok) failures++;
+        Console.WriteLine($"[UT {label}] {(s == null ? "无解" : $"等级[{string.Join(",", s.Runes.Level)}] 件{s.PieceCount} 属性{s.Runes.ItemAttr}")} {(ok ? "✓" : "✗")}");
+    }
+    // 01 覆盖优先：(1,1,1) 优于 (5,0,0)
+    RunU("01覆盖优先", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("w", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("m", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 6, 99) },
+        RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 5), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5), ("c", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 5)),
+        new Grid(3, 3), new Grid(1, 1), -1, s => s.Runes.Level[0] >= 1 && s.Runes.Level[1] >= 1 && s.Runes.Level[2] >= 1);
+    // 07 两火符文共享需求：10 与 20 只需火 20，不是 30
+    RunU("07共享需求", new List<Material> { SM2("f", new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, 6, 99) },
+        RR(("r1", new[] { 0, 0, 0, 10, 0, 0, 0, 0 }, 3), ("r2", new[] { 0, 0, 0, 20, 0, 0, 0, 0 }, 3)),
+        new Grid(5, 5), new Grid(1, 1), -1, s => s.Runes.Level[0] >= 1 && s.Runes.Level[1] >= 1 && s.PieceCount <= 22);
+    // 10 次数不受未使用材料限制：用 100、未用库存 1 → 可炼 100 次
+    RunU("10未用不影响次数", new List<Material> { SM2("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 100), SM2("z", new[] { 9, 0, 0, 0, 0, 0, 0, 0 }, 6, 1) },
+        RR(("r", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1)),
+        new Grid(3, 3), new Grid(1, 1), -1, s => s.Batches >= 100 || (s.PieceCount == 1 && s.Batches >= 99));
+    Console.WriteLine(failures == 0 ? "[UT] 全部通过" : $"[UT] 失败 {failures} 个");
+}
+
 Console.WriteLine(failures == 0 ? "复核全部通过" : $"复核失败 {failures} 个");
 return failures == 0 ? 0 : 1;
