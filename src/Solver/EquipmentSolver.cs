@@ -98,7 +98,7 @@ namespace ZaohuaAutoCraft.Solver
             result.TimedOut = timedOut;
             if (sols.Count == 0)
             {
-                result.Message = anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文");
+                result.Message = anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文" + ShortfallText());
                 result.FoundComboButNoFit = anyNoFit;
             }
             result.CombosTried = combosTried;
@@ -109,6 +109,57 @@ namespace ZaohuaAutoCraft.Solver
         {
             r.ElapsedMs = clock.ElapsedMilliseconds;
             return r;
+        }
+
+        /// <summary>凑不出时的缺口诊断：理论最大属性（正放阳负放阴，忽略面积）不足以满足哪个符文的哪一维。</summary>
+        string ShortfallText()
+        {
+            try
+            {
+                var max = (int[])req.Bonus.Clone();
+                foreach (var m in req.Materials)
+                {
+                    if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                    {
+                        continue;
+                    }
+                    long stock = Math.Min(m.Stock, 100000L);
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        int a = m.Attrs[d];
+                        if (a > 0)
+                        {
+                            max[d] += (int)(a * stock);
+                        }
+                        else if (a < 0)
+                        {
+                            max[d] += (int)(-a * stock);
+                        }
+                    }
+                }
+                var shorts = new List<string>();
+                foreach (var r in req.Runes)
+                {
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        int need = r.Requirement[d];
+                        if (need <= 0)
+                        {
+                            continue;
+                        }
+                        if (max[d] < need)
+                        {
+                            shorts.Add($"{Attr.Names[d]}缺{need - max[d]}");
+                            break;
+                        }
+                    }
+                }
+                return shorts.Count > 0 ? "；缺口：" + string.Join("、", shorts) : "";
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         void Finalize(EquipmentSolution s)
