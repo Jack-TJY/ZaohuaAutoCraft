@@ -16,6 +16,9 @@ namespace ZaohuaAutoCraft
 
         bool visible;
 
+        /// <summary>是否允许「部分达成备选」（放弃部分符文）。</summary>
+        bool allowPartial;
+
         float nextRuneCheck;
 
         Vector2 runeScroll, resultScroll;
@@ -299,6 +302,7 @@ namespace ZaohuaAutoCraft
                 chosen = 0;
                 applied = null;
                 status = "";
+                allowPartial = false;
             }
             if (ModeValues[newMode] == EquipmentMode.MaxAttr)
             {
@@ -342,7 +346,17 @@ namespace ZaohuaAutoCraft
                 }
                 GUI.enabled = true;
             }
-            GUILayout.Label(status);
+            GUILayout.Label(status + (result?.Status != null ? $"  [{result.Status}]" : ""));
+
+            if (result != null && result.Best == null && Plugin.EquipmentMode.Value == EquipmentMode.MaxAttr && !allowPartial)
+            {
+                if (GUILayout.Button("查看部分达成备选（放弃部分符文）", GUILayout.Height(26)))
+                {
+                    allowPartial = true;
+                    StartSolve();
+                    GUIUtility.ExitGUI();
+                }
+            }
 
             if (result?.Best != null)
             {
@@ -410,6 +424,7 @@ namespace ZaohuaAutoCraft
                     TimeLimitMs = Plugin.EquipmentTimeLimitMs.Value,
                     TargetAttr = Plugin.EquipmentTargetAttr.Value,
                     Priority = priority.Length == runes.Count ? priority : new bool[runes.Count],
+                    AllowPartial = allowPartial,
                     TopK = 3,
                 };
                 result = null;

@@ -74,6 +74,9 @@ namespace ZaohuaAutoCraft.Solver
 
         /// <summary>MaxAttr 模式：目标属性维度（0–7），-1 表示未指定。</summary>
         public int TargetAttr = -1;
+
+        /// <summary>允许「部分达成备选」：固定符文组合无法全部满足时，返回放弃部分符文的备选（默认关闭）。</summary>
+        public bool AllowPartial;
     }
 
     /// <summary>符文结算结果（对应 CraftingEquipmentTmp 里我们关心的部分）。</summary>
@@ -130,5 +133,8 @@ namespace ZaohuaAutoCraft.Solver
         public long ElapsedMs;
 
         public string Message;
+
+        /// <summary>求解状态：CP-SAT最优 / CP-SAT可行(限时) / 启发式 / 已证无解 / 未定(超时)。</summary>
+        public string Status;
     }
 }

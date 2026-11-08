@@ -60,6 +60,9 @@ namespace ZaohuaAutoCraft.Solver
 
         int combosTried;
 
+        /// <summary>本次求解走的主路径（CP-SAT / 启发式），用于状态报告。</summary>
+        string solvePath = "";
+
         bool anyNoFit;
 
         int capYang => req.Yang?.Area ?? 0;
@@ -101,6 +104,7 @@ namespace ZaohuaAutoCraft.Solver
                 result.Message = anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文" + ShortfallText());
                 result.FoundComboButNoFit = anyNoFit;
             }
+            result.Status = sols.Count > 0 ? (solvePath == "CP-SAT" ? "CP-SAT" : "启发式") : (timedOut ? "未定（超时）" : "已证无解");
             result.CombosTried = combosTried;
             return Finish(result);
         }
@@ -1480,9 +1484,11 @@ namespace ZaohuaAutoCraft.Solver
                 var cp = SolveCpSatLeveled(mode);
                 if (cp.Count > 0)
                 {
+                    solvePath = "CP-SAT";
                     return cp;
                 }
             }
+            solvePath = "启发式";
             var bases = FindBase(mode);
             if (bases.Count == 0)
             {
@@ -1515,9 +1521,10 @@ namespace ZaohuaAutoCraft.Solver
                     }
                 }
             }
-            if (mode == EquipmentMode.MaxAttr)
+            if (mode == EquipmentMode.MaxAttr && !req.AllowPartial)
             {
-                // 固定符文组合：不接受回退静默放弃部分符文的方案（须全部符文≥1级）
+                // 固定符文组合：不接受回退静默放弃部分符文的方案（须全部符文≥1级）；
+                // 用户主动开启「部分达成备选」时允许放弃
                 candidates = candidates.Where(s => s.Runes.ActiveCount == req.Runes.Count).ToList();
             }
             if (candidates.Count == 0)
