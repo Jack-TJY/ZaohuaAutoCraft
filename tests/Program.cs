@@ -400,6 +400,26 @@ if (Want("equip"))
         var res2 = new EquipmentSolver(req2).Solve();
         Console.WriteLine($"[诊断·符文{rid2}·MaxAttr金] 解{res2.Solutions.Count}个 {res2.ElapsedMs}ms {(res2.Solutions.Count > 0 ? $"等级[{string.Join(",", res2.Solutions[0].Runes.Level)}] ItemAttr={res2.Solutions[0].Runes.ItemAttr}" : res2.Message)}");
     }
+
+    // 诊断：统一流程 SolveUnified（优先级组 + 可选属性 + 材料策略）
+    {
+        void ShowUnified(string label, int[] groups, int attr, MaterialPolicy pol)
+        {
+            var items = CpSatQuantity.SolveUnified(equipAll, flyRunes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), 10.0, groups, attr, pol, null);
+            if (items == null) { Console.WriteLine($"[统一·{label}] 无解"); return; }
+            var sol = CpSatSolver.PackItems(equipAll, new Grid(10, 10), new Grid(9, 10), items, 500);
+            if (sol == null) { Console.WriteLine($"[统一·{label}] {items.Count}件 装不下"); return; }
+            var ev = new RuneEvaluator(flyRunes, new int[Attr.Count]);
+            var rr = ev.Evaluate(sol.Placements);
+            Console.WriteLine($"[统一·{label}] {sol.PieceCount}件 等级[{string.Join(",", rr.Level)}] 属性={rr.ItemAttr} Final=[{string.Join(",", rr.FinalAttrs)}]");
+        }
+        ShowUnified("无优先·不指定·最多次数", null, -1, MaterialPolicy.MaxRepeatCount);
+        ShowUnified("无优先·火·最多次数", null, 3, MaterialPolicy.MaxRepeatCount);
+        ShowUnified("无优先·火·低阶优先", null, 3, MaterialPolicy.LowGradeFirst);
+        var groups = new int[flyRunes.Count];
+        for (int i = 1; i < groups.Length; i++) groups[i] = 1;
+        ShowUnified("组优先·火·最多次数", groups, 3, MaterialPolicy.MaxRepeatCount);
+    }
 }
 
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）

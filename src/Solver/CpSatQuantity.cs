@@ -373,6 +373,209 @@ namespace ZaohuaAutoCraft.Solver
             return items;
         }
 
+        /// <summary>统一流程求解：优先级组先覆盖再升级，可选成品属性硬约束，材料策略，最后省料。</summary>
+        public static List<(Material mat, Side side)> SolveUnified(
+            List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin, double timeLimitSec,
+            int[] priorityGroup, int desiredAttr, MaterialPolicy policy, List<ShapeCut> cuts = null)
+        {
+            var model = new CpModel();
+            var yangVar = new IntVar[materials.Count];
+            var yinVar = new IntVar[materials.Count];
+            var active = new List<int>();
+            for (int i = 0; i < materials.Count; i++)
+            {
+                var m = materials[i];
+                if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                {
+                    continue;
+                }
+                bool helps = false;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (m.Attrs[d] != 0)
+                    {
+                        helps = true;
+                        break;
+                    }
+                }
+                if (!helps)
+                {
+                    continue;
+                }
+                int stock = (int)Math.Min(m.Stock, 10000L);
+                yangVar[i] = model.NewIntVar(0, stock, $"y{i}");
+                yinVar[i] = model.NewIntVar(0, stock, $"n{i}");
+                active.Add(i);
+                model.Add(yangVar[i] + yinVar[i] <= stock);
+            }
+            if (yang != null && active.Count > 0)
+            {
+                model.Add(LinearExpr.Sum(active.Select(i => LinearExpr.Term(yangVar[i], materials[i].Shape.Count))) <= yang.Area);
+            }
+            if (yin != null && active.Count > 0)
+            {
+                model.Add(LinearExpr.Sum(active.Select(i => LinearExpr.Term(yinVar[i], materials[i].Shape.Count))) <= yin.Area);
+            }
+            if (cuts != null)
+            {
+                foreach (var cut in cuts)
+                {
+                    AddShapeCut(model, cut.YinSide ? yinVar : yangVar, active, materials, cut.Counts);
+                }
+            }
+            // 层数变量：允许 0（逐层覆盖语义）
+            var levelVar = new IntVar[runes.Count];
+            var hasVar = new IntVar[runes.Count];
+            for (int r = 0; r < runes.Count; r++)
+            {
+                var rune = runes[r];
+                levelVar[r] = model.NewIntVar(0, rune.MaxStacks, $"lv{r}");
+                hasVar[r] = model.NewBoolVar($"h{r}");
+                model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(hasVar[r], rune.MaxStacks), LinearExpr.Term(levelVar[r], -1) }) >= 0);
+                model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1), LinearExpr.Term(hasVar[r], -1) }) >= 0);
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    int req = rune.Requirement[d];
+                    if (req <= 0)
+                    {
+                        continue;
+                    }
+                    var terms = new List<LinearExpr>();
+                    foreach (int i in active)
+                    {
+                        int a = materials[i].Attrs[d];
+                        if (a == 0)
+                        {
+                            continue;
+                        }
+                        terms.Add(LinearExpr.Term(yangVar[i], a));
+                        terms.Add(LinearExpr.Term(yinVar[i], -a));
+                    }
+                    terms.Add(LinearExpr.Term(levelVar[r], -req));
+                    model.Add(LinearExpr.Sum(terms) >= -bonus[d]);
+                }
+            }
+            // 可选成品属性：硬约束
+            if (desiredAttr >= 0)
+            {
+                int ta = Math.Min(desiredAttr, Attr.Count - 1);
+                int wTa = (ta == 5 || ta == 6 || ta == 7) ? 10 : 1;
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (d == ta)
+                    {
+                        continue;
+                    }
+                    int wD = (d == 5 || d == 6 || d == 7) ? 10 : 1;
+                    var domTerms = new List<LinearExpr>();
+                    foreach (int i in active)
+                    {
+                        int aTa = materials[i].Attrs[ta] * wTa;
+                        if (aTa != 0)
+                        {
+                            domTerms.Add(LinearExpr.Term(yangVar[i], aTa));
+                            domTerms.Add(LinearExpr.Term(yinVar[i], -aTa));
+                        }
+                        int aD = materials[i].Attrs[d] * wD;
+                        if (aD != 0)
+                        {
+                            domTerms.Add(LinearExpr.Term(yangVar[i], -aD));
+                            domTerms.Add(LinearExpr.Term(yinVar[i], aD));
+                        }
+                    }
+                    long delta = 0;
+                    if (ta != 0)
+                    {
+                        bool weightedD = d >= 5;
+                        delta = (d < ta || !weightedD) ? 1L : 0L;
+                    }
+                    long rhsConst = delta + (long)bonus[d] * wD - (long)bonus[ta] * wTa;
+                    model.Add(LinearExpr.Sum(domTerms) >= rhsConst);
+                }
+            }
+            // 优先级组：组间降权，组内先覆盖(每符文一层)再升级
+            int maxGroup = 0;
+            for (int r = 0; r < runes.Count; r++)
+            {
+                int g = priorityGroup != null && r < priorityGroup.Length ? Math.Max(0, priorityGroup[r]) : 0;
+                maxGroup = Math.Max(maxGroup, g);
+            }
+            var obj = new List<LinearExpr>();
+            for (int g = 0; g <= maxGroup; g++)
+            {
+                long gw = 1;
+                for (int k = 0; k < maxGroup - g; k++)
+                {
+                    gw *= 1000;  // 组间权重：高优先组严格压过低优先组
+                }
+                var grp = new List<LinearExpr>();
+                for (int r = 0; r < runes.Count; r++)
+                {
+                    int rg = priorityGroup != null && r < priorityGroup.Length ? Math.Max(0, priorityGroup[r]) : 0;
+                    if (rg != g)
+                    {
+                        continue;
+                    }
+                    // 符文质量是第一目标：整体放大到压过材料策略(品阶和/次数)项
+                    grp.Add(LinearExpr.Term(hasVar[r], gw * 1000L * 10000000L));
+                    grp.Add(LinearExpr.Term(levelVar[r], gw * 10000000L));
+                }
+                obj.Add(LinearExpr.Sum(grp));
+            }
+            // 材料策略
+            if (policy == MaterialPolicy.MaxRepeatCount)
+            {
+                long maxStock = active.Count > 0 ? active.Max(i => Math.Min(materials[i].Stock, 100000L)) : 1;
+                if (maxStock < 1)
+                {
+                    maxStock = 1;
+                }
+                var bVar = model.NewIntVar(1, maxStock, "batches");
+                foreach (int i in active)
+                {
+                    long cap = Math.Min(materials[i].Stock, 10000L);
+                    var usageVar = model.NewIntVar(0, cap, $"u{i}");
+                    model.Add(usageVar == yangVar[i] + yinVar[i]);
+                    var prod = model.NewIntVar(0, maxStock, $"p{i}");
+                    model.AddMultiplicationEquality(prod, bVar, usageVar);
+                    model.Add(prod <= materials[i].Stock);
+                }
+                obj.Add(LinearExpr.Term(bVar, 1));
+            }
+            else
+            {
+                // 低阶优先：最小化品阶加权用量
+                foreach (int i in active)
+                {
+                    obj.Add(LinearExpr.Term(yangVar[i], -(long)materials[i].Grade));
+                    obj.Add(LinearExpr.Term(yinVar[i], -(long)materials[i].Grade));
+                }
+            }
+            model.Maximize(LinearExpr.Sum(obj));
+            var solver = new CpSolver();
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:1,random_seed:0";
+            var status = solver.Solve(model);
+            if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
+            {
+                return null;
+            }
+            var items = new List<(Material mat, Side side)>();
+            foreach (int i in active)
+            {
+                int vy = (int)solver.Value(yangVar[i]);
+                int vn = (int)solver.Value(yinVar[i]);
+                for (int k = 0; k < vy; k++)
+                {
+                    items.Add((materials[i], Side.Yang));
+                }
+                for (int k = 0; k < vn; k++)
+                {
+                    items.Add((materials[i], Side.Yin));
+                }
+            }
+            return items;
+        }
+
         /// <summary>形状切割：至少一个形状的件数比 cut 里少一件。</summary>
         static void AddShapeCut(CpModel model, IntVar[] sideVar, List<int> active, List<Material> materials, Dictionary<string, int> counts)
         {
