@@ -11,9 +11,17 @@ namespace ZaohuaAutoCraft.Solver
     /// </summary>
     public static class CpSatQuantity
     {
+        /// <summary>形状切割：某侧的某个形状多重集装不下，需要至少一个形状件数减少。</summary>
+        public class ShapeCut
+        {
+            public bool YinSide;                 // true=阴侧，false=阳侧
+            public Dictionary<string, int> Counts = new Dictionary<string, int>();  // 形状键 -> 件数
+        }
+
         /// <summary>返回阳/阴件数方案（材料引用 + 侧）；无解或超时返回 null。</summary>
         public static List<(Material mat, Side side)> Solve(
-            List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin, double timeLimitSec)
+            List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin, double timeLimitSec,
+            List<ShapeCut> cuts = null, bool minPieces = false)
         {
             var need = new int[Attr.Count];
             var required = new bool[Attr.Count];
@@ -101,7 +109,27 @@ namespace ZaohuaAutoCraft.Solver
                 model.Add(LinearExpr.Sum(active.Select(i => LinearExpr.Term(yinVar[i], materials[i].Shape.Count))) <= yin.Area);
             }
 
-            model.Minimize(LinearExpr.Sum(active.Select(i => LinearExpr.Term(yangVar[i], materials[i].Price) + LinearExpr.Term(yinVar[i], materials[i].Price))));
+            // 形状切割：排除已知装不下的形状多重集
+            if (cuts != null)
+            {
+                foreach (var cut in cuts)
+                {
+                    AddShapeCut(model, cut.YinSide ? yinVar : yangVar, active, materials, cut.Counts);
+                }
+            }
+
+            if (minPieces)
+            {
+                // 目标：min 总件数（最少材料模式）
+                model.Minimize(LinearExpr.Sum(active.Select(i => LinearExpr.Term(yangVar[i], 1) + LinearExpr.Term(yinVar[i], 1))));
+            }
+            else
+            {
+                // 目标：min 总价（主），同价下 min 件数（次，权重放大价格使价格优先）
+                model.Minimize(LinearExpr.Sum(active.Select(i =>
+                    LinearExpr.Term(yangVar[i], 1000L * materials[i].Price + 1) +
+                    LinearExpr.Term(yinVar[i], 1000L * materials[i].Price + 1))));
+            }
 
             var solver = new CpSolver();
             solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}";
@@ -125,6 +153,38 @@ namespace ZaohuaAutoCraft.Solver
                 }
             }
             return items;
+        }
+
+        /// <summary>形状切割：至少一个形状的件数比 cut 里少一件。</summary>
+        static void AddShapeCut(CpModel model, IntVar[] sideVar, List<int> active, List<Material> materials, Dictionary<string, int> counts)
+        {
+            const int BIG = 10001;
+            var bs = new List<IntVar>();
+            int id = 0;
+            foreach (var kv in counts)
+            {
+                if (kv.Value <= 0)
+                {
+                    continue;
+                }
+                var terms = new List<LinearExpr>();
+                foreach (int i in active)
+                {
+                    if (Packer.GetType(materials[i].Shape).Key == kv.Key)
+                    {
+                        terms.Add(LinearExpr.Term(sideVar[i], 1));
+                    }
+                }
+                var sumExpr = LinearExpr.Sum(terms);
+                var b = model.NewBoolVar($"cut{id++}");
+                bs.Add(b);
+                // b=1 时该形状件数 <= kv.Value-1；b=0 时约束不生效
+                model.Add(sumExpr + LinearExpr.Term(b, BIG) <= kv.Value - 1 + BIG);
+            }
+            if (bs.Count > 0)
+            {
+                model.Add(LinearExpr.Sum(bs) >= 1);
+            }
         }
     }
 }

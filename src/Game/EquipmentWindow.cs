@@ -206,7 +206,10 @@ namespace ZaohuaAutoCraft
             GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})");
         }
 
-        static readonly string[] ModeNames = { "满足最多符文", "指定符文优先", "最少材料", "最低品阶", "最高品阶", "最大属性" };
+        // 满足最多符文是所有模式的内在前提，不再作为独立模式展示
+        static readonly string[] ModeNames = { "指定符文优先", "最少材料", "最低品阶", "最高品阶", "最大属性" };
+
+        static readonly EquipmentMode[] ModeValues = { EquipmentMode.MaxRuneLevel, EquipmentMode.MinPieces, EquipmentMode.LowGrade, EquipmentMode.MaxGrade, EquipmentMode.MaxAttr };
 
         void DrawWindow(int id)
         {
@@ -235,13 +238,18 @@ namespace ZaohuaAutoCraft
             }
             GUILayout.EndScrollView();
 
-            int mode = Mathf.Clamp((int)Plugin.EquipmentMode.Value, 0, ModeNames.Length - 1);
+            int mode = Array.IndexOf(ModeValues, Plugin.EquipmentMode.Value);
+            if (mode < 0)
+            {
+                mode = 2; // 兼容旧配置里的 MaxActiveRunes 等值，落到「最低品阶」
+                Plugin.EquipmentMode.Value = ModeValues[2];
+            }
             int newMode = GUILayout.SelectionGrid(mode, ModeNames, 3);
             if (newMode != mode)
             {
-                Plugin.EquipmentMode.Value = (EquipmentMode)newMode;
+                Plugin.EquipmentMode.Value = ModeValues[newMode];
             }
-            if ((EquipmentMode)newMode == EquipmentMode.MaxAttr)
+            if (ModeValues[newMode] == EquipmentMode.MaxAttr)
             {
                 GUILayout.BeginHorizontal();
                 GUILayout.Label("目标属性", GUILayout.Width(64));

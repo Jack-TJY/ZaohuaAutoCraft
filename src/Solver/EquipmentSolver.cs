@@ -1070,23 +1070,64 @@ namespace ZaohuaAutoCraft.Solver
             return min == int.MaxValue ? int.MinValue : min;
         }
 
-        /// <summary>CP-SAT 求最低价；失败/无解返回空（回退品阶门槛）。</summary>
+        /// <summary>CP-SAT 求最低价；失败/无解返回空（回退品阶门槛）。装不下时加形状切割重求。</summary>
         List<EquipmentSolution> SolveCpSat()
         {
             try
             {
-                var items = CpSatQuantity.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, 5.0);
-                if (items == null || items.Count == 0)
+                var cuts = new List<CpSatQuantity.ShapeCut>();
+                for (int iter = 0; iter < 3; iter++)
                 {
-                    return new List<EquipmentSolution>();
+                    double remainSec = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
+                    var items = CpSatQuantity.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, cuts);
+                    if (items == null || items.Count == 0)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    var sol = PackItems(items);
+                    if (sol != null)
+                    {
+                        return new List<EquipmentSolution> { sol };
+                    }
+                    var cut = FailingShapeCut(items);
+                    if (cut == null)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    cuts.Add(cut);
                 }
-                var sol = PackItems(items);
-                return sol == null ? new List<EquipmentSolution>() : new List<EquipmentSolution> { sol };
+                return new List<EquipmentSolution>();
             }
             catch
             {
                 return new List<EquipmentSolution>();
             }
+        }
+
+        /// <summary>装填失败时，找出装不下的那侧，形成形状切割；两侧都装得下则返回 null。</summary>
+        CpSatQuantity.ShapeCut FailingShapeCut(List<(Material mat, Side side)> items)
+        {
+            foreach (Side side in new[] { Side.Yang, Side.Yin })
+            {
+                var pieces = items.Where(x => x.side == side).Select(x => x.mat).ToList();
+                if (pieces.Count == 0)
+                {
+                    continue;
+                }
+                var grid = side == Side.Yang ? req.Yang : req.Yin;
+                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, 300);
+                if (!packed.Ok)
+                {
+                    var counts = new Dictionary<string, int>();
+                    foreach (var m in pieces)
+                    {
+                        string key = Packer.GetType(m.Shape).Key;
+                        counts[key] = counts.TryGetValue(key, out int c) ? c + 1 : 1;
+                    }
+                    return new CpSatQuantity.ShapeCut { YinSide = side == Side.Yin, Counts = counts };
+                }
+            }
+            return null;
         }
 
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
