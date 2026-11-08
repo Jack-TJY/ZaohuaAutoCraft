@@ -1024,10 +1024,8 @@ namespace ZaohuaAutoCraft.Solver
                 case EquipmentMode.MaxBatches:
                     return new IComparable[] { active, level, s.Batches, -s.PieceCount };
                 case EquipmentMode.MaxAttr:
-                {
-                    int ta = Math.Max(0, req.TargetAttr);
-                    return new IComparable[] { s.Runes.FinalAttrs[ta], active, level, s.Batches };
-                }
+                    // 锁定属性（硬约束已保证归属）→ 等级优先 → 省料（价 → 件数）
+                    return new IComparable[] { active, level, -s.Price, -s.PieceCount };
                 case EquipmentMode.MaxRuneLevel:
                 {
                     int pri = 0, other = 0;
@@ -1170,8 +1168,12 @@ namespace ZaohuaAutoCraft.Solver
                     continue;
                 }
                 var grid = side == Side.Yang ? req.Yang : req.Yin;
-                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, 300);
-                if (!packed.Ok)
+                // 局部预算（当前时间 + 300ms），而非绝对 300ms；并区分「超时」与「已证装不下」
+                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, (int)(clock.ElapsedMilliseconds + 300));
+                if (packed.Ok || packed.TimedOut)
+                {
+                    continue;
+                }
                 {
                     var counts = new Dictionary<string, int>();
                     foreach (var m in pieces)
@@ -1512,6 +1514,11 @@ namespace ZaohuaAutoCraft.Solver
                         candidates.Add(s);
                     }
                 }
+            }
+            if (mode == EquipmentMode.MaxAttr)
+            {
+                // 固定符文组合：不接受回退静默放弃部分符文的方案（须全部符文≥1级）
+                candidates = candidates.Where(s => s.Runes.ActiveCount == req.Runes.Count).ToList();
             }
             if (candidates.Count == 0)
             {

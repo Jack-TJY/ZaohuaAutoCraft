@@ -277,20 +277,20 @@ namespace ZaohuaAutoCraft.Solver
                         model.Add(LinearExpr.Sum(domTerms) >= rhsConst);
                     }
                 }
-                // 目标：max attrs[ta]（权重 200）> max 等级（权重 1）
+                // 目标：先最大化总等级，再最小化材料价值（价 → 件数）；不再堆目标属性数值
+                long maxPrice = active.Count > 0 ? active.Max(i => (long)materials[i].Price) : 0;
+                long maxPieces = (long)(yang?.Area ?? 0) + (yin?.Area ?? 0);
+                long levelWeight = maxPieces * (200L * maxPrice + 1) + 1;
                 var objAttr = new List<LinearExpr>();
-                foreach (int i in active)
-                {
-                    int a = materials[i].Attrs[ta];
-                    if (a != 0)
-                    {
-                        objAttr.Add(LinearExpr.Term(yangVar[i], a * 200L));
-                        objAttr.Add(LinearExpr.Term(yinVar[i], -a * 200L));
-                    }
-                }
                 for (int r = 0; r < runes.Count; r++)
                 {
-                    objAttr.Add(LinearExpr.Term(levelVar[r], 1));
+                    objAttr.Add(LinearExpr.Term(levelVar[r], levelWeight));
+                }
+                foreach (int i in active)
+                {
+                    long w = 200L * materials[i].Price + 1;
+                    objAttr.Add(LinearExpr.Term(yangVar[i], -w));
+                    objAttr.Add(LinearExpr.Term(yinVar[i], -w));
                 }
                 model.Maximize(LinearExpr.Sum(objAttr));
             }
