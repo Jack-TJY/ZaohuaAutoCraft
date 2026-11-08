@@ -37,8 +37,8 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>同上前提，材料品阶最低。</summary>
         LowGrade,
 
-        /// <summary>符文权重和最大，冲更高品阶法器。</summary>
-        MaxGrade,
+        /// <summary>符文等级尽量高，同等级比炼制次数。</summary>
+        MaxBatches,
 
         /// <summary>指定属性最大（法器属性按冰风雷×10取最大）。</summary>
         MaxAttr

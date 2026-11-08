@@ -16,6 +16,8 @@ namespace ZaohuaAutoCraft
 
         bool visible;
 
+        float nextRuneCheck;
+
         Vector2 runeScroll, resultScroll;
 
         List<Rune> runes = new List<Rune>();
@@ -75,6 +77,19 @@ namespace ZaohuaAutoCraft
             {
                 Verify();
             }
+            // 面板打开时定时检查符文是否变化，变了就自动刷新（无需开关面板）
+            if (visible && UnityEngine.Time.unscaledTime >= nextRuneCheck)
+            {
+                nextRuneCheck = UnityEngine.Time.unscaledTime + 0.5f;
+                if (RunesChanged())
+                {
+                    RefreshFurnace();
+                    result = null;
+                    chosen = 0;
+                    applied = null;
+                    status = "";
+                }
+            }
             var mouse = Input.mousePosition;
             var gui = new Vector2(mouse.x, Screen.height - mouse.y);
             MouseOver = pressing || ButtonRect().Contains(gui) || (visible && rect.Contains(gui));
@@ -98,6 +113,30 @@ namespace ZaohuaAutoCraft
         {
             visible = false;
             MouseOver = false;
+        }
+
+        /// <summary>当前已选符文与缓存是否不同（按 ID 集合比较）。</summary>
+        bool RunesChanged()
+        {
+            try
+            {
+                var cur = Game.EquipmentBridge.GetSelectedRunes();
+                if (cur == null)
+                {
+                    return runes.Count != 0;
+                }
+                if (cur.Count != runes.Count)
+                {
+                    return true;
+                }
+                var a = cur.Select(r => r.Id).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+                var b = runes.Select(r => r.Id).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+                return !a.SequenceEqual(b);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         void RefreshFurnace()
@@ -207,9 +246,9 @@ namespace ZaohuaAutoCraft
         }
 
         // 满足最多符文是所有模式的内在前提，不再作为独立模式展示
-        static readonly string[] ModeNames = { "指定符文优先", "最少材料", "最低品阶", "最高品阶", "最大属性" };
+        static readonly string[] ModeNames = { "指定符文优先", "最少材料", "最低品阶", "最多炼制次数", "最大属性" };
 
-        static readonly EquipmentMode[] ModeValues = { EquipmentMode.MaxRuneLevel, EquipmentMode.MinPieces, EquipmentMode.LowGrade, EquipmentMode.MaxGrade, EquipmentMode.MaxAttr };
+        static readonly EquipmentMode[] ModeValues = { EquipmentMode.MaxRuneLevel, EquipmentMode.MinPieces, EquipmentMode.LowGrade, EquipmentMode.MaxBatches, EquipmentMode.MaxAttr };
 
         void DrawWindow(int id)
         {

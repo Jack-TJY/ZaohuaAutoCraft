@@ -571,8 +571,8 @@ namespace ZaohuaAutoCraft.Solver
                     int ta = Math.Max(0, req.TargetAttr);
                     return newAttrs[ta] - oldAttrs[ta];
                 }
-                case EquipmentMode.MaxGrade:
-                    return newR.GradeScore - oldR.GradeScore;
+                case EquipmentMode.MaxBatches:
+                    return -m.Shape.Count;
                 case EquipmentMode.LowGrade:
                     return -m.Grade;
                 default:
@@ -959,7 +959,7 @@ namespace ZaohuaAutoCraft.Solver
             return PackItems(items);
         }
 
-        /// <summary>统一排序键（越大越好）：数量 > 等级 > 模式专属 > 件数。</summary>
+        /// <summary>统一排序键（越大越好）。比较顺序：最少材料/最多炼制次数=符文数量&gt;符文等级&gt;件数/次数；指定符文优先=优先等级&gt;符文数量&gt;其它等级&gt;件数；最高属性=目标属性&gt;符文数量&gt;等级&gt;次数。</summary>
         IComparable[] RankKey(EquipmentSolution s, EquipmentMode mode)
         {
             int active = s.Runes.ActiveCount;
@@ -967,27 +967,31 @@ namespace ZaohuaAutoCraft.Solver
             switch (mode)
             {
                 case EquipmentMode.MinPieces:
-                    return new IComparable[] { active, -s.PieceCount, level };
+                    return new IComparable[] { active, level, -s.PieceCount };
                 case EquipmentMode.LowGrade:
                     return new IComparable[] { active, -s.MaxGrade, -s.GradeSum, -s.Price, -s.PieceCount };
-                case EquipmentMode.MaxGrade:
-                    return new IComparable[] { active, level, s.Runes.GradeScore, -s.PieceCount };
+                case EquipmentMode.MaxBatches:
+                    return new IComparable[] { active, level, s.Batches, -s.PieceCount };
                 case EquipmentMode.MaxAttr:
                 {
                     int ta = Math.Max(0, req.TargetAttr);
-                    return new IComparable[] { active, s.Runes.FinalAttrs[ta], level, -s.PieceCount };
+                    return new IComparable[] { s.Runes.FinalAttrs[ta], active, level, s.Batches };
                 }
                 case EquipmentMode.MaxRuneLevel:
                 {
-                    int pri = 0;
+                    int pri = 0, other = 0;
                     for (int i = 0; i < req.Runes.Count; i++)
                     {
                         if (req.Priority != null && i < req.Priority.Length && req.Priority[i])
                         {
                             pri += s.Runes.Level[i];
                         }
+                        else
+                        {
+                            other += s.Runes.Level[i];
+                        }
                     }
-                    return new IComparable[] { pri, active, level, -s.PieceCount };
+                    return new IComparable[] { pri, active, other, -s.PieceCount };
                 }
                 default:
                     return new IComparable[] { active, level, -s.PieceCount };
@@ -1128,6 +1132,42 @@ namespace ZaohuaAutoCraft.Solver
                 }
             }
             return null;
+        }
+
+        /// <summary>CP-SAT 等级建模求最高品阶/指定符文优先；失败返回空（回退启发式）。装不下时加形状切割重求。</summary>
+        List<EquipmentSolution> SolveCpSatLeveled(EquipmentMode mode)
+        {
+            try
+            {
+                int ta = Math.Max(0, req.TargetAttr);
+                bool[] pri = req.Priority != null && req.Priority.Length == req.Runes.Count ? req.Priority : new bool[req.Runes.Count];
+                var cuts = new List<CpSatQuantity.ShapeCut>();
+                for (int iter = 0; iter < 3; iter++)
+                {
+                    double remainSec = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
+                    var items = CpSatQuantity.SolveLeveled(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, mode, ta, pri, cuts);
+                    if (items == null || items.Count == 0)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    var sol = PackItems(items);
+                    if (sol != null)
+                    {
+                        return new List<EquipmentSolution> { sol };
+                    }
+                    var cut = FailingShapeCut(items);
+                    if (cut == null)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    cuts.Add(cut);
+                }
+                return new List<EquipmentSolution>();
+            }
+            catch
+            {
+                return new List<EquipmentSolution>();
+            }
         }
 
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
@@ -1381,6 +1421,15 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
         List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
         {
+            // 最少材料 / 指定符文优先 / 最多炼制次数：先试 CP-SAT 等级建模（已证实启发式非最优）
+            if (mode == EquipmentMode.MinPieces || mode == EquipmentMode.MaxRuneLevel || mode == EquipmentMode.MaxBatches)
+            {
+                var cp = SolveCpSatLeveled(mode);
+                if (cp.Count > 0)
+                {
+                    return cp;
+                }
+            }
             var bases = FindBase(mode);
             if (bases.Count == 0)
             {
