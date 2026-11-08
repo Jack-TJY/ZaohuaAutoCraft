@@ -544,11 +544,20 @@ namespace ZaohuaAutoCraft.Solver
             }
             else
             {
-                // 低阶优先：最小化品阶加权用量
+                // 低阶优先：品阶秩加权用量（越大高阶权重越大，避免高阶消耗）。
+                // 注：精确「品阶数量向量」词典序需指数级权重，会压过符文质量，故用秩加权代理。
+                var grades = active.Select(i => materials[i].Grade).Distinct().OrderBy(g => g).ToList();
+                var rank = new Dictionary<int, int>();
+                for (int gi = 0; gi < grades.Count; gi++)
+                {
+                    rank[grades[gi]] = gi;
+                }
                 foreach (int i in active)
                 {
-                    obj.Add(LinearExpr.Term(yangVar[i], -(long)materials[i].Grade));
-                    obj.Add(LinearExpr.Term(yinVar[i], -(long)materials[i].Grade));
+                    // 品阶秩主导(×2000)，同阶再最少件数(+1)
+                    long w = (rank.TryGetValue(materials[i].Grade, out var r2) ? r2 : 0) * 2000L + 1;
+                    obj.Add(LinearExpr.Term(yangVar[i], -w));
+                    obj.Add(LinearExpr.Term(yinVar[i], -w));
                 }
             }
             model.Maximize(LinearExpr.Sum(obj));
