@@ -245,18 +245,51 @@ namespace ZaohuaAutoCraft.Solver
             }
             if (mode == EquipmentMode.MaxAttr)
             {
-                var terms = new List<LinearExpr>();
-                foreach (int i in active)
+                int ta = Math.Max(0, targetAttr);
+                int wTa = (ta == 5 || ta == 6 || ta == 7) ? 10 : 1;
+                // 目标属性领先：scaled_ta >= scaled_d + (ta != 0 ? 1 : 0)，并列归金
+                for (int d = 0; d < Attr.Count; d++)
                 {
-                    int a = materials[i].Attrs[targetAttr];
-                    if (a == 0)
+                    if (d == ta)
                     {
                         continue;
                     }
-                    terms.Add(LinearExpr.Term(yangVar[i], a));
-                    terms.Add(LinearExpr.Term(yinVar[i], -a));
+                    int wD = (d == 5 || d == 6 || d == 7) ? 10 : 1;
+                    var domTerms = new List<LinearExpr>();
+                    foreach (int i in active)
+                    {
+                        int aTa = materials[i].Attrs[ta] * wTa;
+                        if (aTa != 0)
+                        {
+                            domTerms.Add(LinearExpr.Term(yangVar[i], aTa));
+                            domTerms.Add(LinearExpr.Term(yinVar[i], -aTa));
+                        }
+                        int aD = materials[i].Attrs[d] * wD;
+                        if (aD != 0)
+                        {
+                            domTerms.Add(LinearExpr.Term(yangVar[i], -aD));
+                            domTerms.Add(LinearExpr.Term(yinVar[i], aD));
+                        }
+                    }
+                    long rhsConst = (ta != 0 ? 1L : 0L) + (long)bonus[d] * wD - (long)bonus[ta] * wTa;
+                    model.Add(LinearExpr.Sum(domTerms) >= rhsConst);
                 }
-                model.Maximize(LinearExpr.Sum(terms));
+                // 目标：max attrs[ta]（权重 200）> max 等级（权重 1）
+                var objAttr = new List<LinearExpr>();
+                foreach (int i in active)
+                {
+                    int a = materials[i].Attrs[ta];
+                    if (a != 0)
+                    {
+                        objAttr.Add(LinearExpr.Term(yangVar[i], a * 200L));
+                        objAttr.Add(LinearExpr.Term(yinVar[i], -a * 200L));
+                    }
+                }
+                for (int r = 0; r < runes.Count; r++)
+                {
+                    objAttr.Add(LinearExpr.Term(levelVar[r], 1));
+                }
+                model.Maximize(LinearExpr.Sum(objAttr));
             }
             else if (mode == EquipmentMode.MinPieces)
             {

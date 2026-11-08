@@ -1421,8 +1421,8 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
         List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
         {
-            // 最少材料 / 指定符文优先 / 最多炼制次数：先试 CP-SAT 等级建模（已证实启发式非最优）
-            if (mode == EquipmentMode.MinPieces || mode == EquipmentMode.MaxRuneLevel || mode == EquipmentMode.MaxBatches)
+            // 最少材料 / 指定符文优先 / 最多炼制次数 / 最大属性：先试 CP-SAT 等级建模（已证实启发式非最优）
+            if (mode == EquipmentMode.MinPieces || mode == EquipmentMode.MaxRuneLevel || mode == EquipmentMode.MaxBatches || mode == EquipmentMode.MaxAttr)
             {
                 var cp = SolveCpSatLeveled(mode);
                 if (cp.Count > 0)
