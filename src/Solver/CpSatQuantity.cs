@@ -132,7 +132,7 @@ namespace ZaohuaAutoCraft.Solver
             }
 
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:1,random_seed:0";
             var status = solver.Solve(model);
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {
@@ -158,7 +158,7 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>等级建模：求各模式的等级最优（最高品阶/指定属性最大/指定符文优先）。返回材料件数方案。</summary>
         public static List<(Material mat, Side side)> SolveLeveled(
             List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin, double timeLimitSec,
-            EquipmentMode mode, int targetAttr = 0, bool[] priority = null, List<ShapeCut> cuts = null)
+            EquipmentMode mode, int targetAttr = 0, bool[] priority = null, List<ShapeCut> cuts = null, bool dominant = true)
         {
             var model = new CpModel();
             var yangVar = new IntVar[materials.Count];
@@ -245,18 +245,62 @@ namespace ZaohuaAutoCraft.Solver
             }
             if (mode == EquipmentMode.MaxAttr)
             {
-                var terms = new List<LinearExpr>();
+                int ta = Math.Max(0, targetAttr);
+                int wTa = (ta == 5 || ta == 6 || ta == 7) ? 10 : 1;
+                if (dominant)
+                {
+                    // 目标属性领先：scaled_ta >= scaled_d + (ta != 0 ? 1 : 0)，并列归金
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        if (d == ta)
+                        {
+                            continue;
+                        }
+                        int wD = (d == 5 || d == 6 || d == 7) ? 10 : 1;
+                        var domTerms = new List<LinearExpr>();
+                        foreach (int i in active)
+                        {
+                            int aTa = materials[i].Attrs[ta] * wTa;
+                            if (aTa != 0)
+                            {
+                                domTerms.Add(LinearExpr.Term(yangVar[i], aTa));
+                                domTerms.Add(LinearExpr.Term(yinVar[i], -aTa));
+                            }
+                            int aD = materials[i].Attrs[d] * wD;
+                            if (aD != 0)
+                            {
+                                domTerms.Add(LinearExpr.Term(yangVar[i], -aD));
+                                domTerms.Add(LinearExpr.Term(yinVar[i], aD));
+                            }
+                        }
+                        long delta = 0;
+                        if (ta != 0)
+                        {
+                            // 贴近游戏归属：d<目标 需严格领先（否则目标压不过前面的最大值）；
+                            // d>目标且是加权维度(冰/风/雷×10)时允许并列（并列不归金）；其余（非加权）并列归金，需严格
+                            bool weightedD = d >= 5;
+                            delta = (d < ta || !weightedD) ? 1L : 0L;
+                        }
+                        long rhsConst = delta + (long)bonus[d] * wD - (long)bonus[ta] * wTa;
+                        model.Add(LinearExpr.Sum(domTerms) >= rhsConst);
+                    }
+                }
+                // 目标：先最大化总等级，再最小化材料价值（价 → 件数）；不再堆目标属性数值
+                long maxPrice = active.Count > 0 ? active.Max(i => (long)materials[i].Price) : 0;
+                long maxPieces = (long)(yang?.Area ?? 0) + (yin?.Area ?? 0);
+                long levelWeight = maxPieces * (200L * maxPrice + 1) + 1;
+                var objAttr = new List<LinearExpr>();
+                for (int r = 0; r < runes.Count; r++)
+                {
+                    objAttr.Add(LinearExpr.Term(levelVar[r], levelWeight));
+                }
                 foreach (int i in active)
                 {
-                    int a = materials[i].Attrs[targetAttr];
-                    if (a == 0)
-                    {
-                        continue;
-                    }
-                    terms.Add(LinearExpr.Term(yangVar[i], a));
-                    terms.Add(LinearExpr.Term(yinVar[i], -a));
+                    long w = 200L * materials[i].Price + 1;
+                    objAttr.Add(LinearExpr.Term(yangVar[i], -w));
+                    objAttr.Add(LinearExpr.Term(yinVar[i], -w));
                 }
-                model.Maximize(LinearExpr.Sum(terms));
+                model.Maximize(LinearExpr.Sum(objAttr));
             }
             else if (mode == EquipmentMode.MinPieces)
             {
@@ -305,7 +349,7 @@ namespace ZaohuaAutoCraft.Solver
                 model.Maximize(LinearExpr.Sum(objTerms));
             }
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)}";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:1,random_seed:0";
             var status = solver.Solve(model);
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {

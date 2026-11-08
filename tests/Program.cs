@@ -206,7 +206,7 @@ void RunEquip(string label, Func<Material, long> stockOf, Grid yang, Grid yin, E
         }
         else if (res.TimedOut) { timeout++; if (Environment.GetEnvironmentVariable("VERBOSE") != null) Console.WriteLine($"  超时 符文 {r.Id} 组合 {res.CombosTried}"); }
         else if (res.FoundComboButNoFit) noFit++;
-        else none++;
+        else { none++; if (Environment.GetEnvironmentVariable("VERBOSE") != null) Console.WriteLine($"  无解 符文 {r.Id} 要求 {string.Join(",", r.Requirement)} 满级{r.MaxStacks}"); }
     }
     Console.WriteLine($"[炼器·{label}] 成功 {ok} / 无解 {none} / 装不下 {noFit} / 超时 {timeout}；平均 {totalMs / Math.Max(1, allRunes.Count)} ms，最慢 {maxMs} ms（符文 {slowest}）");
 }
@@ -297,12 +297,18 @@ if (Want("topup")) Run("补料·随机库存·大炉", r => mats.Select(m => Cop
 // 4. 炼器：单个符文逐个验证（全材料 99 = 最坏搜索量）
 if (Want("equip"))
 {
-    RunEquip("全材料·大锤·最少材料", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MinPieces, 2000);
-    RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
-    RunEquip("全材料·大锤·指定符文优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
-    RunEquip("全材料·大锤·最低品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
-    RunEquip("全材料·大锤·最多炼制次数", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxBatches, 2000, requireActive: false);
-    RunEquip("全材料·大锤·最大属性(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 2000, targetAttr: 0, requireActive: false);
+    if (Environment.GetEnvironmentVariable("MINI") == null)
+    {
+        if (Environment.GetEnvironmentVariable("MAONLY") == null)
+        {
+            RunEquip("全材料·大锤·最少材料", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MinPieces, 2000);
+            RunEquip("全材料·3x3·最少材料", _ => 99, new Grid(3, 3), new Grid(3, 3), EquipmentMode.MinPieces, 2000);
+            RunEquip("全材料·大锤·指定符文优先", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxRuneLevel, 2000);
+            RunEquip("全材料·大锤·最低品阶", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.LowGrade, 2000);
+            RunEquip("全材料·大锤·最多炼制次数", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxBatches, 2000, requireActive: false);
+        }
+        RunEquip("全材料·大锤·最大属性(金)", _ => 99, new Grid(10, 10), new Grid(9, 10), EquipmentMode.MaxAttr, 3000, targetAttr: 0, requireActive: false);
+    }
     // 多符文·满足最多符文
     var multiRunes = allRunes.Take(5).ToList();
     var multi = new EquipmentRequest { Materials = equipAll, Runes = multiRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxActiveRunes, TimeLimitMs = 3000, TopK = 1 };
@@ -338,6 +344,61 @@ if (Want("equip"))
                 Console.WriteLine($"    品阶{g.Key.Grade} 价格{g.Key.Price} id={g.Key.Id} attrs=[{string.Join(",", g.Key.Attrs)}] ×{g.Count()}");
             }
         }
+    }
+
+    // 诊断：飞剑5 指定火属性
+    {
+        var fr = new EquipmentRequest { Materials = equipAll, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxAttr, TargetAttr = 3, TimeLimitMs = 3000, TopK = 1 };
+        var fres = new EquipmentSolver(fr).Solve();
+        Console.WriteLine($"[飞剑5·MaxAttr火] 解 {fres.Solutions.Count} 个，{fres.ElapsedMs}ms，{(fres.Message ?? "")}");
+        foreach (var s in fres.Solutions)
+        {
+            Console.WriteLine($"  {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] ItemAttr={s.Runes.ItemAttr} FinalAttrs=[{string.Join(",", s.Runes.FinalAttrs)}] 复核 {(EquipmentSolver.Verify(fr, s) ?? "OK")}");
+        }
+    }
+
+    // 诊断：无火6000材料 + 天赋加成（火-50 水+150）飞剑5 指定火 → 应走「不强制领先」兜底而非无解
+    {
+        var bonus = new int[Attr.Count];
+        bonus[1] = 150;
+        bonus[3] = -50;
+        var noFire6000 = equipAll.Where(m => m.Id != "993820").ToList();
+        var fr = new EquipmentRequest { Materials = noFire6000, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxAttr, TargetAttr = 3, Bonus = bonus, TimeLimitMs = 3000, TopK = 1 };
+        var fres = new EquipmentSolver(fr).Solve();
+        Console.WriteLine($"[无火6000+天赋·MaxAttr火] 解 {fres.Solutions.Count} 个，{fres.ElapsedMs}ms，{(fres.Message ?? "")}");
+        foreach (var s in fres.Solutions)
+        {
+            Console.WriteLine($"  {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] ItemAttr={s.Runes.ItemAttr} FinalAttrs=[{string.Join(",", s.Runes.FinalAttrs)}] 复核 {(EquipmentSolver.Verify(fr, s) ?? "OK")}");
+        }
+    }
+
+    // 诊断：飞剑5 指定符文优先 确定性（同请求跑3次应完全一致，验证 CP-SAT 单线程固定种子）
+    {
+        var priArr = new bool[flyRunes.Count];
+        priArr[2] = true;
+        var sigs = new List<string>();
+        for (int k = 0; k < 3; k++)
+        {
+            var fr = new EquipmentRequest { Materials = equipAll, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxRuneLevel, Priority = priArr, TimeLimitMs = 3000, TopK = 3 };
+            var fres = new EquipmentSolver(fr).Solve();
+            var sig = fres.Solutions.Count == 0 ? "无解" : string.Join(" | ", fres.Solutions.Select(s => $"{s.PieceCount}件[{string.Join(",", s.Runes.Level)}]"));
+            sigs.Add(sig);
+            Console.WriteLine($"[确定性·MaxRuneLevel #{k}] {fres.ElapsedMs}ms {sig}");
+        }
+        Console.WriteLine(sigs.Distinct().Count() == 1 ? "[确定性] 3次一致 ✓" : "[确定性] 3次不一致 ✗");
+    }
+
+    // 诊断：高需求符文 127/227/261 在 MaxAttr(金) 下，给足时间是否可行
+    foreach (var rid2 in new[] { "127", "227", "261" })
+    {
+        var rr = allRunes.FirstOrDefault(x => x.Id == rid2);
+        if (rr == null)
+        {
+            continue;
+        }
+        var req2 = new EquipmentRequest { Materials = equipAll, Runes = new List<Rune> { rr }, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxAttr, TargetAttr = 0, TimeLimitMs = 5000, TopK = 1 };
+        var res2 = new EquipmentSolver(req2).Solve();
+        Console.WriteLine($"[诊断·符文{rid2}·MaxAttr金] 解{res2.Solutions.Count}个 {res2.ElapsedMs}ms {(res2.Solutions.Count > 0 ? $"等级[{string.Join(",", res2.Solutions[0].Runes.Level)}] ItemAttr={res2.Solutions[0].Runes.ItemAttr}" : res2.Message)}");
     }
 }
 
@@ -403,6 +464,19 @@ if (Environment.GetEnvironmentVariable("INV") != null)
     {
         Console.WriteLine($"    {g.Key.Id} 价{g.Key.Price} attrs=[{string.Join(",", g.Key.Attrs)}] ×{g.Count()}");
     }
+
+    // 诊断：真实库存·飞剑5 指定火属性
+    var frFire = new EquipmentRequest { Materials = invMats, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Mode = EquipmentMode.MaxAttr, TargetAttr = 3, TimeLimitMs = 3000, TopK = 1 };
+    var fresFire = new EquipmentSolver(frFire).Solve();
+    Console.WriteLine($"[MaxAttr火·真实库存] 解 {fresFire.Solutions.Count} 个，{fresFire.ElapsedMs}ms，{(fresFire.Message ?? "")}");
+    foreach (var s in fresFire.Solutions)
+    {
+        Console.WriteLine($"  {s.PieceCount}件 ItemAttr={s.Runes.ItemAttr} FinalAttrs=[{string.Join(",", s.Runes.FinalAttrs)}] 复核 {(EquipmentSolver.Verify(frFire, s) ?? "OK")}");
+        foreach (var g in s.Placements.GroupBy(p => p.Material).OrderByDescending(g => g.Key.Price))
+        {
+            Console.WriteLine($"    {g.Key.Id} 价{g.Key.Price} attrs=[{string.Join(",", g.Key.Attrs)}] ×{g.Count()}");
+        }
+    }
 }
 
 // 7. P1 修复反例测试
@@ -415,12 +489,12 @@ if (Environment.GetEnvironmentVariable("P1FIX") != null)
     var q1 = new EquipmentRequest { Materials = new List<Material> { SM("金", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1, 1) }, Runes = r1, Yang = new Grid(3, 3), Yin = new Grid(3, 3), Mode = EquipmentMode.MaxAttr, TargetAttr = 3, TimeLimitMs = 2000, TopK = 1 };
     var s1 = new EquipmentSolver(q1).Solve();
     Console.WriteLine($"[P1-1 MaxAttr指定火无火] 解{s1.Solutions.Count}个 {(s1.Solutions.Count == 0 ? "✓ 正确无解" : "✗ 错误返回金")}");
-    // P1-2: 阳2格，金3水3上限10，L(阶1金3水3)/G(阶2金15)/W(阶2水15) → 应选 L 一件
+    // P1-2: 阳2格，符文金3水3上限10，材料 L(金3水3)/G(金15)/W(水15)。新语义等级优先：最高等级5（G+W两件），同等级再最少件数
     var r2 = new List<Rune> { new Rune { Id = "r", Name = "r", Requirement = new[] { 3, 3, 0, 0, 0, 0, 0, 0 }, MaxStacks = 10 } };
     var q2 = new EquipmentRequest { Materials = new List<Material> { SM("L", new[] { 3, 3, 0, 0, 0, 0, 0, 0 }, 1, 1), SM("G", new[] { 15, 0, 0, 0, 0, 0, 0, 0 }, 2, 1), SM("W", new[] { 0, 15, 0, 0, 0, 0, 0, 0 }, 2, 1) }, Runes = r2, Yang = new Grid(2, 1), Yin = new Grid(1, 1), Mode = EquipmentMode.MinPieces, TimeLimitMs = 2000, TopK = 1 };
     var s2 = new EquipmentSolver(q2).Solve();
     var b2 = s2.Best;
-    Console.WriteLine($"[P1-2 最少材料一层解] 件数{(b2 != null ? b2.PieceCount : 0)} {(b2 != null && b2.PieceCount == 1 ? "✓ 1件正确" : "✗ 未找到1件解")}");
+    Console.WriteLine($"[P1-2 最少材料等级优先] 件数{(b2 != null ? b2.PieceCount : 0)} 等级{(b2 != null ? b2.Runes.TotalLevel : 0)} {(b2 != null && b2.Runes.TotalLevel == 5 ? "✓ 最高等级5" : "✗ 未到最高等级")}");
     // P1-3: 指定符文优先，优先金+普通火各需1上限3，材料 A(金2火1阶2价10)/B(金1火2阶1价100)；优先金等级不应低于火
     var r3 = new List<Rune> { new Rune { Id = "金", Name = "金", Requirement = new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, MaxStacks = 3 }, new Rune { Id = "火", Name = "火", Requirement = new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, MaxStacks = 3 } };
     var q3 = new EquipmentRequest { Materials = new List<Material> { SM("A", new[] { 2, 0, 0, 1, 0, 0, 0, 0 }, 2, 10), SM("B", new[] { 1, 0, 0, 2, 0, 0, 0, 0 }, 1, 100) }, Runes = r3, Yang = new Grid(3, 3), Yin = new Grid(3, 3), Mode = EquipmentMode.MaxRuneLevel, Priority = new[] { true, false }, TimeLimitMs = 2000, TopK = 1 };

@@ -60,6 +60,9 @@ namespace ZaohuaAutoCraft.Solver
 
         int combosTried;
 
+        /// <summary>本次求解走的主路径（CP-SAT / 启发式），用于状态报告。</summary>
+        string solvePath = "";
+
         bool anyNoFit;
 
         int capYang => req.Yang?.Area ?? 0;
@@ -98,9 +101,10 @@ namespace ZaohuaAutoCraft.Solver
             result.TimedOut = timedOut;
             if (sols.Count == 0)
             {
-                result.Message = anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文");
+                result.Message = anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文" + ShortfallText());
                 result.FoundComboButNoFit = anyNoFit;
             }
+            result.Status = sols.Count > 0 ? (solvePath == "CP-SAT" ? "CP-SAT" : "启发式") : (timedOut ? "未定（超时）" : "已证无解");
             result.CombosTried = combosTried;
             return Finish(result);
         }
@@ -109,6 +113,57 @@ namespace ZaohuaAutoCraft.Solver
         {
             r.ElapsedMs = clock.ElapsedMilliseconds;
             return r;
+        }
+
+        /// <summary>凑不出时的缺口诊断：理论最大属性（正放阳负放阴，忽略面积）不足以满足哪个符文的哪一维。</summary>
+        string ShortfallText()
+        {
+            try
+            {
+                var max = (int[])req.Bonus.Clone();
+                foreach (var m in req.Materials)
+                {
+                    if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
+                    {
+                        continue;
+                    }
+                    long stock = Math.Min(m.Stock, 100000L);
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        int a = m.Attrs[d];
+                        if (a > 0)
+                        {
+                            max[d] += (int)(a * stock);
+                        }
+                        else if (a < 0)
+                        {
+                            max[d] += (int)(-a * stock);
+                        }
+                    }
+                }
+                var shorts = new List<string>();
+                foreach (var r in req.Runes)
+                {
+                    for (int d = 0; d < Attr.Count; d++)
+                    {
+                        int need = r.Requirement[d];
+                        if (need <= 0)
+                        {
+                            continue;
+                        }
+                        if (max[d] < need)
+                        {
+                            shorts.Add($"{Attr.Names[d]}缺{need - max[d]}");
+                            break;
+                        }
+                    }
+                }
+                return shorts.Count > 0 ? "；缺口：" + string.Join("、", shorts) : "";
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         void Finalize(EquipmentSolution s)
@@ -973,10 +1028,8 @@ namespace ZaohuaAutoCraft.Solver
                 case EquipmentMode.MaxBatches:
                     return new IComparable[] { active, level, s.Batches, -s.PieceCount };
                 case EquipmentMode.MaxAttr:
-                {
-                    int ta = Math.Max(0, req.TargetAttr);
-                    return new IComparable[] { s.Runes.FinalAttrs[ta], active, level, s.Batches };
-                }
+                    // 锁定属性（硬约束已保证归属）→ 等级优先 → 省料（价 → 件数）
+                    return new IComparable[] { active, level, -s.Price, -s.PieceCount };
                 case EquipmentMode.MaxRuneLevel:
                 {
                     int pri = 0, other = 0;
@@ -1119,8 +1172,12 @@ namespace ZaohuaAutoCraft.Solver
                     continue;
                 }
                 var grid = side == Side.Yang ? req.Yang : req.Yin;
-                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, 300);
-                if (!packed.Ok)
+                // 局部预算（当前时间 + 300ms），而非绝对 300ms；并区分「超时」与「已证装不下」
+                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, (int)(clock.ElapsedMilliseconds + 300));
+                if (packed.Ok || packed.TimedOut)
+                {
+                    continue;
+                }
                 {
                     var counts = new Dictionary<string, int>();
                     foreach (var m in pieces)
@@ -1135,7 +1192,7 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         /// <summary>CP-SAT 等级建模求最高品阶/指定符文优先；失败返回空（回退启发式）。装不下时加形状切割重求。</summary>
-        List<EquipmentSolution> SolveCpSatLeveled(EquipmentMode mode)
+        List<EquipmentSolution> SolveCpSatLeveled(EquipmentMode mode, bool dominant = true)
         {
             try
             {
@@ -1145,7 +1202,7 @@ namespace ZaohuaAutoCraft.Solver
                 for (int iter = 0; iter < 3; iter++)
                 {
                     double remainSec = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
-                    var items = CpSatQuantity.SolveLeveled(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, mode, ta, pri, cuts);
+                    var items = CpSatQuantity.SolveLeveled(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, mode, ta, pri, cuts, dominant);
                     if (items == null || items.Count == 0)
                     {
                         return new List<EquipmentSolution>();
@@ -1421,15 +1478,17 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
         List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
         {
-            // 最少材料 / 指定符文优先 / 最多炼制次数：先试 CP-SAT 等级建模（已证实启发式非最优）
-            if (mode == EquipmentMode.MinPieces || mode == EquipmentMode.MaxRuneLevel || mode == EquipmentMode.MaxBatches)
+            // 最少材料 / 指定符文优先 / 最多炼制次数 / 最大属性：先试 CP-SAT 等级建模（已证实启发式非最优）
+            if (mode == EquipmentMode.MinPieces || mode == EquipmentMode.MaxRuneLevel || mode == EquipmentMode.MaxBatches || mode == EquipmentMode.MaxAttr)
             {
                 var cp = SolveCpSatLeveled(mode);
                 if (cp.Count > 0)
                 {
+                    solvePath = "CP-SAT";
                     return cp;
                 }
             }
+            solvePath = "启发式";
             var bases = FindBase(mode);
             if (bases.Count == 0)
             {
@@ -1462,8 +1521,28 @@ namespace ZaohuaAutoCraft.Solver
                     }
                 }
             }
+            if (mode == EquipmentMode.MaxAttr && !req.AllowPartial)
+            {
+                // 固定符文组合：不接受回退静默放弃部分符文的方案（须全部符文≥1级）；
+                // 用户主动开启「部分达成备选」时允许放弃
+                candidates = candidates.Where(s => s.Runes.ActiveCount == req.Runes.Count).ToList();
+            }
             if (candidates.Count == 0)
             {
+                // 最大属性：目标属性领先不可行时，退化为不强制领先（最大化目标属性值，避免整体无解）
+                // 仅当目标属性值 > 0（确有目标属性材料/符文）才返回，否则保持无解（避免 P1「无火返回金」回归）
+                if (mode == EquipmentMode.MaxAttr)
+                {
+                    var cp2 = SolveCpSatLeveled(mode, dominant: false);
+                    if (cp2.Count > 0)
+                    {
+                        int ta = Math.Max(0, req.TargetAttr);
+                        if (eval.SumAttrs(cp2[0].Placements)[ta] > 0)
+                        {
+                            return cp2;
+                        }
+                    }
+                }
                 return candidates;
             }
             candidates.Sort((x, y) => CompareRank(RankKey(x, mode), RankKey(y, mode)));
