@@ -703,6 +703,10 @@ if (Environment.GetEnvironmentVariable("UTEST") != null)
     RunU("06上限差异", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99) },
         RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5)),
         new Grid(5, 5), new Grid(1, 1), -1, s => s.Runes.Level[0] == 1 && s.Runes.Level[1] == 5);
+    // 08 指定属性正确：指定火 → 成品必须是火
+    RunU("08指定火", new List<Material> { SM2("f", new[] { 0, 0, 0, 2, 0, 0, 0, 0 }, 6, 99), SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99) },
+        RR(("r", new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, 1)),
+        new Grid(3, 3), new Grid(1, 1), 3, s => s.Runes.ItemAttr == 3 && s.Runes.Level[0] >= 1);
     Console.WriteLine(failures == 0 ? "[UT] 全部通过" : $"[UT] 失败 {failures} 个");
 }
 
