@@ -699,6 +699,10 @@ if (Environment.GetEnvironmentVariable("UTEST") != null)
         }
         Console.WriteLine($"[UT 05优先级] {(s5 == null ? "无解" : $"A{s5.Runes.Level[0]} B{s5.Runes.Level[1]}")} {(ok5 ? "✓" : "✗")}");
     }
+    // 06 上限差异：一枚上限1、一枚上限5，前者满级不挡住后者
+    RunU("06上限差异", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99) },
+        RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5)),
+        new Grid(5, 5), new Grid(1, 1), -1, s => s.Runes.Level[0] == 1 && s.Runes.Level[1] == 5);
     Console.WriteLine(failures == 0 ? "[UT] 全部通过" : $"[UT] 失败 {failures} 个");
 }
 
