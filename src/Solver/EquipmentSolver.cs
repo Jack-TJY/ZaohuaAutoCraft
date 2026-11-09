@@ -1295,33 +1295,43 @@ namespace ZaohuaAutoCraft.Solver
         {
             try
             {
-                var cuts = new List<CpSatQuantity.ShapeCut>();
-                for (int iter = 0; iter < 3; iter++)
+                // 阶段1：符文质量（先覆盖再升级），占约 60% 预算
+                double s1 = Math.Max(0.1, (deadline * 0.6 - clock.ElapsedMilliseconds) / 1000.0);
+                var items1 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s1, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, null, null);
+                if (items1 == null || items1.Count == 0)
                 {
-                    double remainSec = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
-                    var items = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remainSec, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cuts);
-                    if (items == null || items.Count == 0)
-                    {
-                        return new List<EquipmentSolution>();
-                    }
-                    var sol = PackItems(items);
-                    if (sol != null)
-                    {
-                        return new List<EquipmentSolution> { sol };
-                    }
-                    var cut = FailingShapeCut(items);
-                    if (cut == null)
-                    {
-                        return new List<EquipmentSolution>();
-                    }
-                    cuts.Add(cut);
+                    return new List<EquipmentSolution>();
                 }
-                return new List<EquipmentSolution>();
+                var sol1 = PackItems(items1);
+                if (sol1 == null)
+                {
+                    return new List<EquipmentSolution>();
+                }
+                // 阶段2：固定阶段1的层数向量，单独优化材料策略 + 省料
+                int[] lv = LevelsOf(sol1.Placements);
+                double s2 = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
+                var items2 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s2, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, null, lv);
+                if (items2 != null && items2.Count > 0)
+                {
+                    var sol2 = PackItems(items2);
+                    if (sol2 != null)
+                    {
+                        return new List<EquipmentSolution> { sol2 };
+                    }
+                }
+                return new List<EquipmentSolution> { sol1 };
             }
             catch
             {
                 return new List<EquipmentSolution>();
             }
+        }
+
+        /// <summary>由摆法算每个符文的实际层数向量（阶段2固定用）。</summary>
+        int[] LevelsOf(List<Placement> placements)
+        {
+            var attrs = eval.SumAttrs(placements);
+            return eval.Evaluate(attrs).Level;
         }
 
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>

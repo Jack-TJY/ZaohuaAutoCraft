@@ -376,7 +376,7 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>统一流程求解：优先级组先覆盖再升级，可选成品属性硬约束，材料策略，最后省料。</summary>
         public static List<(Material mat, Side side)> SolveUnified(
             List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin, double timeLimitSec,
-            int[] priorityGroup, int desiredAttr, MaterialPolicy policy, List<ShapeCut> cuts = null)
+            int[] priorityGroup, int desiredAttr, MaterialPolicy policy, List<ShapeCut> cuts = null, int[] fixedLevel = null)
         {
             var model = new CpModel();
             var yangVar = new IntVar[materials.Count];
@@ -477,6 +477,14 @@ namespace ZaohuaAutoCraft.Solver
                     model.Add(LinearExpr.Sum(terms) >= -bonus[d]);
                 }
             }
+            // 阶段2：固定第一阶段已选层数向量，再单独优化材料策略/省料
+            if (fixedLevel != null)
+            {
+                for (int r = 0; r < runes.Count && r < fixedLevel.Length; r++)
+                {
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1) }) == fixedLevel[r]);
+                }
+            }
             // 可选成品属性：硬约束
             if (desiredAttr >= 0)
             {
@@ -523,28 +531,31 @@ namespace ZaohuaAutoCraft.Solver
                 maxGroup = Math.Max(maxGroup, g);
             }
             var obj = new List<LinearExpr>();
-            for (int g = 0; g <= maxGroup; g++)
+            if (fixedLevel == null)
             {
-                long gw = 1;
-                for (int k = 0; k < maxGroup - g; k++)
+                // 阶段1：符文质量（先覆盖1/2/3层，再逐层升级）
+                for (int g = 0; g <= maxGroup; g++)
                 {
-                    gw *= 1000;  // 组间权重：高优先组严格压过低优先组
-                }
-                var grp = new List<LinearExpr>();
-                for (int r = 0; r < runes.Count; r++)
-                {
-                    int rg = priorityGroup != null && r < priorityGroup.Length ? Math.Max(0, priorityGroup[r]) : 0;
-                    if (rg != g)
+                    long gw = 1;
+                    for (int k = 0; k < maxGroup - g; k++)
                     {
-                        continue;
+                        gw *= 1000;  // 组间权重：高优先组严格压过低优先组
                     }
-                    // 符文质量是第一目标：先覆盖1层，再2层，再3层，再总等级；整体放大压过材料策略
-                    grp.Add(LinearExpr.Term(hasVar[r], gw * 100000L * 1000000L));
-                    grp.Add(LinearExpr.Term(has2Var[r], gw * 1000L * 1000000L));
-                    grp.Add(LinearExpr.Term(has3Var[r], gw * 10L * 1000000L));
-                    grp.Add(LinearExpr.Term(levelVar[r], gw * 1000000L));
+                    var grp = new List<LinearExpr>();
+                    for (int r = 0; r < runes.Count; r++)
+                    {
+                        int rg = priorityGroup != null && r < priorityGroup.Length ? Math.Max(0, priorityGroup[r]) : 0;
+                        if (rg != g)
+                        {
+                            continue;
+                        }
+                        grp.Add(LinearExpr.Term(hasVar[r], gw * 100000L * 1000000L));
+                        grp.Add(LinearExpr.Term(has2Var[r], gw * 1000L * 1000000L));
+                        grp.Add(LinearExpr.Term(has3Var[r], gw * 10L * 1000000L));
+                        grp.Add(LinearExpr.Term(levelVar[r], gw * 1000000L));
+                    }
+                    obj.Add(LinearExpr.Sum(grp));
                 }
-                obj.Add(LinearExpr.Sum(grp));
             }
             // 材料策略
             if (policy == MaterialPolicy.MaxRepeatCount)
@@ -582,6 +593,15 @@ namespace ZaohuaAutoCraft.Solver
                     long w = (rank.TryGetValue(materials[i].Grade, out var r2) ? r2 : 0) * 2000L + 1;
                     obj.Add(LinearExpr.Term(yangVar[i], -w));
                     obj.Add(LinearExpr.Term(yinVar[i], -w));
+                }
+            }
+            if (fixedLevel != null && policy == MaterialPolicy.MaxRepeatCount)
+            {
+                // 阶段2：固定等级下，次数优先，同次数最少件数
+                foreach (int i in active)
+                {
+                    obj.Add(LinearExpr.Term(yangVar[i], -1));
+                    obj.Add(LinearExpr.Term(yinVar[i], -1));
                 }
             }
             model.Maximize(LinearExpr.Sum(obj));
