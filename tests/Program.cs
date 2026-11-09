@@ -448,13 +448,26 @@ if (Want("equip"))
             var s = res.Solutions.Count > 0 ? res.Solutions[0] : null;
             Console.WriteLine($"[诊断·火加成{fb}] {(s == null ? $"无解({res.Message})" : $"{s.PieceCount}件 属性={s.Runes.ItemAttr} 等级[{string.Join(",", s.Runes.Level)}]")} 状态{res.Status}");
         }
-        // 计时诊断：不同时限下能否找到可行解
-        foreach (var tl in new[] { 0.3, 1.0, 3.0, 8.0 })
+        // 计时诊断：不同时限下能否找到可行解（1线程 vs 8线程）
+        foreach (var workers in new[] { 1, 8 })
         {
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            var it = CpSatQuantity.SolveUnified(equipAll, flyRunes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), tl, null, -1, MaterialPolicy.MaxRepeatCount, null, null);
-            Console.WriteLine($"[计时·限{tl}s] {sw.ElapsedMilliseconds}ms items={it?.Count ?? -1}");
+            CpSatQuantity.Workers = workers;
+            foreach (var tl in new[] { 0.3, 1.0, 3.0, 8.0 })
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var it = CpSatQuantity.SolveUnified(equipAll, flyRunes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), tl, null, -1, MaterialPolicy.MaxRepeatCount, null, null);
+                Console.WriteLine($"[计时·{workers}线程·限{tl}s] {sw.ElapsedMilliseconds}ms items={it?.Count ?? -1}");
+            }
         }
+        // 紧盘（小盘面 + 全材料）1线程 vs 8线程
+        foreach (var workers in new[] { 1, 8 })
+        {
+            CpSatQuantity.Workers = workers;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var it = CpSatQuantity.SolveUnified(equipAll, flyRunes, new int[Attr.Count], new Grid(5, 5), new Grid(4, 5), 8.0, null, -1, MaterialPolicy.MaxRepeatCount, null, null);
+            Console.WriteLine($"[紧盘·{workers}线程] {sw.ElapsedMilliseconds}ms items={it?.Count ?? -1}");
+        }
+        CpSatQuantity.Workers = 1;
     }
 }
 
