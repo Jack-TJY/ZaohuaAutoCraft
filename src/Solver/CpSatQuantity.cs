@@ -577,9 +577,30 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 obj.Add(LinearExpr.Term(bVar, 1));
             }
+            else if (fixedLevel != null)
+            {
+                // 阶段2：精确品阶数量向量 D（从最高阶到最低阶字典序最小；指数权重，无符文质量竞争）
+                var grades = active.Select(i => materials[i].Grade).Distinct().OrderByDescending(g => g).ToList();
+                long baseW = Math.Max(2L, (long)((yang?.Area ?? 0) + (yin?.Area ?? 0)) + 1L);
+                var gw = new Dictionary<int, long>();
+                long wt = 1;
+                for (int gi = grades.Count - 1; gi >= 0; gi--)
+                {
+                    gw[grades[gi]] = wt;
+                    if (gi > 0)
+                    {
+                        wt = wt > long.MaxValue / baseW ? long.MaxValue / 2 : wt * baseW;
+                    }
+                }
+                foreach (int i in active)
+                {
+                    long weight = gw.TryGetValue(materials[i].Grade, out var val) ? val : 1;
+                    obj.Add(LinearExpr.Term(yangVar[i], -weight));
+                    obj.Add(LinearExpr.Term(yinVar[i], -weight));
+                }
+            }
             else
             {
-                // 低阶优先：品阶秩加权用量（越大高阶权重越大，避免高阶消耗）。
                 // 注：精确「品阶数量向量」词典序需指数级权重，会压过符文质量，故用秩加权代理。
                 var grades = active.Select(i => materials[i].Grade).Distinct().OrderBy(g => g).ToList();
                 var rank = new Dictionary<int, int>();
