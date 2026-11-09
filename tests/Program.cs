@@ -400,6 +400,55 @@ if (Want("equip"))
         var res2 = new EquipmentSolver(req2).Solve();
         Console.WriteLine($"[诊断·符文{rid2}·MaxAttr金] 解{res2.Solutions.Count}个 {res2.ElapsedMs}ms {(res2.Solutions.Count > 0 ? $"等级[{string.Join(",", res2.Solutions[0].Runes.Level)}] ItemAttr={res2.Solutions[0].Runes.ItemAttr}" : res2.Message)}");
     }
+
+    // 诊断：统一流程 SolveUnified（优先级组 + 可选属性 + 材料策略）
+    {
+        void ShowUnified(string label, int[] groups, int attr, MaterialPolicy pol)
+        {
+            var items = CpSatQuantity.SolveUnified(equipAll, flyRunes, new int[Attr.Count], new Grid(10, 10), new Grid(9, 10), 10.0, groups, attr, pol, null);
+            if (items == null) { Console.WriteLine($"[统一·{label}] 无解"); return; }
+            var sol = CpSatSolver.PackItems(equipAll, new Grid(10, 10), new Grid(9, 10), items, 500);
+            if (sol == null) { Console.WriteLine($"[统一·{label}] {items.Count}件 装不下"); return; }
+            var ev = new RuneEvaluator(flyRunes, new int[Attr.Count]);
+            var rr = ev.Evaluate(sol.Placements);
+            Console.WriteLine($"[统一·{label}] {sol.PieceCount}件 等级[{string.Join(",", rr.Level)}] 属性={rr.ItemAttr} Final=[{string.Join(",", rr.FinalAttrs)}]");
+        }
+        ShowUnified("无优先·不指定·最多次数", null, -1, MaterialPolicy.MaxRepeatCount);
+        ShowUnified("无优先·火·最多次数", null, 3, MaterialPolicy.MaxRepeatCount);
+        ShowUnified("无优先·火·低阶优先", null, 3, MaterialPolicy.LowGradeFirst);
+        var groups = new int[flyRunes.Count];
+        for (int i = 1; i < groups.Length; i++) groups[i] = 1;
+        ShowUnified("组优先·火·最多次数", groups, 3, MaterialPolicy.MaxRepeatCount);
+    }
+
+    // 诊断：统一流程（生产路径 Unified=true）
+    {
+        void ShowFlow(string label, int[] groups, int attr, MaterialPolicy pol)
+        {
+            var req = new EquipmentRequest { Materials = equipAll, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Unified = true, TargetAttr = attr, PriorityGroup = groups, MaterialPolicy = pol, TimeLimitMs = 10000, TopK = 1 };
+            var res = new EquipmentSolver(req).Solve();
+            if (res.Solutions.Count == 0) { Console.WriteLine($"[统一流程·{label}] 无解 {res.Message}"); return; }
+            var s = res.Solutions[0];
+            Console.WriteLine($"[统一流程·{label}] {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 属性={s.Runes.ItemAttr} 批次{s.Batches} 状态{res.Status} 复核{(EquipmentSolver.Verify(req, s) ?? "OK")}");
+        }
+        ShowFlow("不指定·最多次数", null, -1, MaterialPolicy.MaxRepeatCount);
+        ShowFlow("火·最多次数", null, 3, MaterialPolicy.MaxRepeatCount);
+        ShowFlow("火·低阶优先", null, 3, MaterialPolicy.LowGradeFirst);
+        var g2 = new int[flyRunes.Count];
+        for (int i = 1; i < g2.Length; i++) g2[i] = 1;
+        ShowFlow("优先首符文·火·最多次数", g2, 3, MaterialPolicy.MaxRepeatCount);
+
+        // 诊断：不同负火加成下「指定火+最多次数」
+        foreach (var fb in new[] { -50, -200, -1000, -5000 })
+        {
+            var bonus = new int[Attr.Count];
+            bonus[3] = fb;
+            var req = new EquipmentRequest { Materials = equipAll, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Bonus = bonus, Unified = true, TargetAttr = 3, MaterialPolicy = MaterialPolicy.MaxRepeatCount, TimeLimitMs = 5000, TopK = 1 };
+            var res = new EquipmentSolver(req).Solve();
+            var s = res.Solutions.Count > 0 ? res.Solutions[0] : null;
+            Console.WriteLine($"[诊断·火加成{fb}] {(s == null ? $"无解({res.Message})" : $"{s.PieceCount}件 属性={s.Runes.ItemAttr} 等级[{string.Join(",", s.Runes.Level)}]")} 状态{res.Status}");
+        }
+    }
 }
 
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）
@@ -589,6 +638,72 @@ if (Environment.GetEnvironmentVariable("CMP2") != null)
             Console.WriteLine($"{name,-14} {runes.Count,-3} {hObj,-9} {h.ElapsedMs,-7} {cpObj,-7} {sw.ElapsedMilliseconds,-6} {cpPack}");
         }
     }
+}
+
+// 验收：统一流程关键用例
+if (Environment.GetEnvironmentVariable("UTEST") != null)
+{
+    Console.WriteLine("===== 统一流程验收用例 =====");
+    Material SM2(string id, int[] attrs, int grade, long stock) => new Material { Id = id, Name = id, Attrs = attrs, Shape = new List<Cell> { new Cell(0, 0) }, Stock = stock, Grade = grade, Price = 1 };
+    List<Rune> RR(params (string id, int[] req, int max)[] rs) => rs.Select(x => new Rune { Id = x.id, Name = x.id, Requirement = x.req, MaxStacks = x.max }).ToList();
+    void RunU(string label, List<Material> mats, List<Rune> runes, Grid yang, Grid yin, int attr, Func<EquipmentSolution, bool> check)
+    {
+        var req = new EquipmentRequest { Materials = mats, Runes = runes, Yang = yang, Yin = yin, Unified = true, TargetAttr = attr, TimeLimitMs = 3000, TopK = 1 };
+        var res = new EquipmentSolver(req).Solve();
+        var s = res.Solutions.Count > 0 ? res.Solutions[0] : null;
+        int failuresBefore = failures;
+        bool ok = s != null && check(s) && EquipmentSolver.Verify(req, s) == null;
+        if (!ok) failures++;
+        Console.WriteLine($"[UT {label}] {(s == null ? "无解" : $"等级[{string.Join(",", s.Runes.Level)}] 件{s.PieceCount} 属性{s.Runes.ItemAttr}")} {(ok ? "✓" : "✗")}");
+    }
+    // 01 覆盖优先：(1,1,1) 优于 (5,0,0)
+    RunU("01覆盖优先", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("w", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("m", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 6, 99) },
+        RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 5), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5), ("c", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 5)),
+        new Grid(3, 3), new Grid(1, 1), -1, s => s.Runes.Level[0] >= 1 && s.Runes.Level[1] >= 1 && s.Runes.Level[2] >= 1);
+    // 02 逐层覆盖：(2,2) 优于 (3,1)
+    RunU("02逐层覆盖", new List<Material> { SM2("pg", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 4), SM2("pw", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 4) },
+        RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 5), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5)),
+        new Grid(2, 2), new Grid(1, 1), -1, s => s.Runes.Level[0] >= 2 && s.Runes.Level[1] >= 2);
+    // 07 两火符文共享需求：10 与 20 只需火 20，不是 30
+    RunU("07共享需求", new List<Material> { SM2("f", new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, 6, 99) },
+        RR(("r1", new[] { 0, 0, 0, 10, 0, 0, 0, 0 }, 3), ("r2", new[] { 0, 0, 0, 20, 0, 0, 0, 0 }, 3)),
+        new Grid(5, 5), new Grid(1, 1), -1, s => s.Runes.Level[0] >= 1 && s.Runes.Level[1] >= 1 && s.PieceCount <= 22);
+    // 10 次数不受未使用材料限制：用 100、未用库存 1 → 可炼 100 次
+    RunU("10未用不影响次数", new List<Material> { SM2("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 100), SM2("z", new[] { 9, 0, 0, 0, 0, 0, 0, 0 }, 6, 1) },
+        RR(("r", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1)),
+        new Grid(3, 3), new Grid(1, 1), -1, s => s.Batches >= 100 || (s.PieceCount == 1 && s.Batches >= 99));
+    // 03 只能激活 2/3 → 返回部分方案而非整体无解
+    RunU("03部分激活", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99) },
+        RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 1), ("c", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 1)),
+        new Grid(3, 3), new Grid(1, 1), -1, s => s.Runes.ActiveCount == 2);
+    // 05 优先级 A>B：A 等级不低于 B
+    {
+        var req5 = new EquipmentRequest
+        {
+            Materials = new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99) },
+            Runes = RR(("A", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 3), ("B", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 3)),
+            Yang = new Grid(4, 4),
+            Yin = new Grid(1, 1),
+            Unified = true,
+            TargetAttr = -1,
+            PriorityGroup = new[] { 0, 1 },
+            TimeLimitMs = 3000,
+            TopK = 1,
+        };
+        var res5 = new EquipmentSolver(req5).Solve();
+        var s5 = res5.Solutions.Count > 0 ? res5.Solutions[0] : null;
+        bool ok5 = s5 != null && s5.Runes.Level[0] >= s5.Runes.Level[1];
+        if (!ok5)
+        {
+            failures++;
+        }
+        Console.WriteLine($"[UT 05优先级] {(s5 == null ? "无解" : $"A{s5.Runes.Level[0]} B{s5.Runes.Level[1]}")} {(ok5 ? "✓" : "✗")}");
+    }
+    // 06 上限差异：一枚上限1、一枚上限5，前者满级不挡住后者
+    RunU("06上限差异", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99) },
+        RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5)),
+        new Grid(5, 5), new Grid(1, 1), -1, s => s.Runes.Level[0] == 1 && s.Runes.Level[1] == 5);
+    Console.WriteLine(failures == 0 ? "[UT] 全部通过" : $"[UT] 失败 {failures} 个");
 }
 
 Console.WriteLine(failures == 0 ? "复核全部通过" : $"复核失败 {failures} 个");

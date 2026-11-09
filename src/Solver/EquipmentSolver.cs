@@ -104,7 +104,7 @@ namespace ZaohuaAutoCraft.Solver
                 result.Message = anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文" + ShortfallText());
                 result.FoundComboButNoFit = anyNoFit;
             }
-            result.Status = sols.Count > 0 ? (solvePath == "CP-SAT" ? "CP-SAT" : "启发式") : (timedOut ? "未定（超时）" : "已证无解");
+            result.Status = sols.Count > 0 ? (string.IsNullOrEmpty(solvePath) ? "启发式" : solvePath) : (timedOut ? "未定（超时）" : "已证无解");
             result.CombosTried = combosTried;
             return Finish(result);
         }
@@ -1014,9 +1014,72 @@ namespace ZaohuaAutoCraft.Solver
             return PackItems(items);
         }
 
+        /// <summary>统一流程排序键（越大越好）：优先级组覆盖(先覆盖再逐层升级) › 材料策略(次数/低阶) › −总价 › −件数。</summary>
+        IComparable[] UnifiedRankKey(EquipmentSolution s)
+        {
+            int maxGroup = 0;
+            var pg = req.PriorityGroup;
+            for (int r = 0; r < req.Runes.Count; r++)
+            {
+                maxGroup = Math.Max(maxGroup, pg != null && r < pg.Length ? Math.Max(0, pg[r]) : 0);
+            }
+            var lv = s.Runes.Level;
+            long score = 0;
+            for (int g = 0; g <= maxGroup; g++)
+            {
+                long gw = 1;
+                for (int k = 0; k < maxGroup - g; k++)
+                {
+                    gw *= 1000;
+                }
+                long cov = 0, dep = 0;
+                for (int r = 0; r < req.Runes.Count; r++)
+                {
+                    int rg = pg != null && r < pg.Length ? Math.Max(0, pg[r]) : 0;
+                    if (rg != g)
+                    {
+                        continue;
+                    }
+                    cov += lv[r] >= 1 ? 1 : 0;
+                    dep += lv[r];
+                }
+                score += gw * (1000 * cov + dep);
+            }
+            long pol;
+            if (req.MaterialPolicy == MaterialPolicy.MaxRepeatCount)
+            {
+                pol = s.Batches;
+            }
+            else
+            {
+                pol = -GradeRankSum(s);
+            }
+            return new IComparable[] { score, pol, -s.Price, -s.PieceCount };
+        }
+
+        long GradeRankSum(EquipmentSolution s)
+        {
+            var grades = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0).Select(m => m.Grade).Distinct().OrderBy(g => g).ToList();
+            var rank = new Dictionary<int, int>();
+            for (int i = 0; i < grades.Count; i++)
+            {
+                rank[grades[i]] = i;
+            }
+            long sum = 0;
+            foreach (var p in s.Placements)
+            {
+                sum += rank.TryGetValue(p.Material.Grade, out var r) ? r : 0;
+            }
+            return sum;
+        }
+
         /// <summary>统一排序键（越大越好）。比较顺序：最少材料/最多炼制次数=符文数量&gt;符文等级&gt;件数/次数；指定符文优先=优先等级&gt;符文数量&gt;其它等级&gt;件数；最高属性=目标属性&gt;符文数量&gt;等级&gt;次数。</summary>
         IComparable[] RankKey(EquipmentSolution s, EquipmentMode mode)
         {
+            if (req.Unified)
+            {
+                return UnifiedRankKey(s);
+            }
             int active = s.Runes.ActiveCount;
             int level = s.Runes.TotalLevel;
             switch (mode)
@@ -1225,6 +1288,50 @@ namespace ZaohuaAutoCraft.Solver
             {
                 return new List<EquipmentSolution>();
             }
+        }
+
+        /// <summary>统一流程：CP-SAT 求解（优先级组+可选属性+材料策略），装不下时加形状切割重求。</summary>
+        List<EquipmentSolution> SolveCpSatUnified()
+        {
+            try
+            {
+                // 阶段1：符文质量（先覆盖再升级），占约 60% 预算
+                double s1 = Math.Max(0.1, (deadline * 0.6 - clock.ElapsedMilliseconds) / 1000.0);
+                var items1 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s1, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, null, null);
+                if (items1 == null || items1.Count == 0)
+                {
+                    return new List<EquipmentSolution>();
+                }
+                var sol1 = PackItems(items1);
+                if (sol1 == null)
+                {
+                    return new List<EquipmentSolution>();
+                }
+                // 阶段2：固定阶段1的层数向量，单独优化材料策略 + 省料
+                int[] lv = LevelsOf(sol1.Placements);
+                double s2 = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
+                var items2 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s2, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, null, lv);
+                if (items2 != null && items2.Count > 0)
+                {
+                    var sol2 = PackItems(items2);
+                    if (sol2 != null)
+                    {
+                        return new List<EquipmentSolution> { sol2 };
+                    }
+                }
+                return new List<EquipmentSolution> { sol1 };
+            }
+            catch
+            {
+                return new List<EquipmentSolution>();
+            }
+        }
+
+        /// <summary>由摆法算每个符文的实际层数向量（阶段2固定用）。</summary>
+        int[] LevelsOf(List<Placement> placements)
+        {
+            var attrs = eval.SumAttrs(placements);
+            return eval.Evaluate(attrs).Level;
         }
 
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
@@ -1478,6 +1585,42 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>统一搜索：基座（满足最多符文）→ 提级 → 按模式排序取前 K。</summary>
         List<EquipmentSolution> SolveSatisfy(EquipmentMode mode)
         {
+            if (req.Unified)
+            {
+                var cu = SolveCpSatUnified();
+                if (cu.Count > 0)
+                {
+                    solvePath = "CP-SAT(统一)";
+                    foreach (var s in cu)
+                    {
+                        Finalize(s);
+                    }
+                    // 统一节省：CP 成功结果也走 ReduceWaste（保持统一排序键不下降）
+                    var reduced = ReduceWaste(cu[0], EquipmentMode.MaxAttr);
+                    if (reduced != null)
+                    {
+                        Finalize(reduced);
+                        cu[0] = reduced;
+                    }
+                    return cu;
+                }
+                // 指定了法宝属性时，不能回退到忽略属性的启发式（否则会得到错误属性，如要火出金）
+                if (req.TargetAttr >= 0)
+                {
+                    return new List<EquipmentSolution>();
+                }
+                // 未指定属性：回退到启发式（按优先级组提级）
+                mode = EquipmentMode.MaxRuneLevel;
+                if (req.Priority == null || req.Priority.Length != req.Runes.Count)
+                {
+                    var pri = new bool[req.Runes.Count];
+                    for (int i = 0; i < pri.Length; i++)
+                    {
+                        pri[i] = req.PriorityGroup == null || i >= req.PriorityGroup.Length || req.PriorityGroup[i] == 0;
+                    }
+                    req.Priority = pri;
+                }
+            }
             // 最少材料 / 指定符文优先 / 最多炼制次数 / 最大属性：先试 CP-SAT 等级建模（已证实启发式非最优）
             if (mode == EquipmentMode.MinPieces || mode == EquipmentMode.MaxRuneLevel || mode == EquipmentMode.MaxBatches || mode == EquipmentMode.MaxAttr)
             {

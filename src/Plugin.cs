@@ -30,6 +30,8 @@ namespace ZaohuaAutoCraft
 
         internal static ConfigEntry<int> EquipmentTargetAttr;
 
+        internal static ConfigEntry<Solver.MaterialPolicy> EquipmentMaterialPolicy;
+
         private void Awake()
         {
             Log = Logger;
@@ -43,7 +45,8 @@ namespace ZaohuaAutoCraft
             DefaultMode = Config.Bind("炼丹", "Mode", Solver.DrugMode.MinPieces, "默认模式：MinPieces 最少材料 / LowGrade 最低品阶（先让用到的最高品阶最低，再比品阶总和，最后比灵石价值） / MaxCount 最多成丹 / MaxQuality 最高品质 / MaxBatches 最多可炼次数（窗口里切换会自动记住）");
             EquipmentTimeLimitMs = Config.Bind("炼器", "EquipmentTimeLimitMs", 3000, "炼器最长计算时间（毫秒）。一般 1 秒内算完，只有材料很多或锻造锤很小时才会用满");
             EquipmentMode = Config.Bind("炼器", "EquipmentMode", Solver.EquipmentMode.MinPieces, "默认模式：MaxActiveRunes 满足最多符文 / MaxRuneLevel 指定符文满级 / MinPieces 最少材料 / LowGrade 低阶优先 / MaxBatches 最多炼制次数 / MaxAttr 指定属性最大");
-            EquipmentTargetAttr = Config.Bind("炼器", "EquipmentTargetAttr", 0, "「指定属性最大」模式的目标属性：0 金 / 1 水 / 2 木 / 3 火 / 4 土 / 5 冰 / 6 风 / 7 雷");
+            EquipmentTargetAttr = Config.Bind("炼器", "EquipmentTargetAttr", -1, "法宝属性：-1 不指定 / 0 金 / 1 水 / 2 木 / 3 火 / 4 土 / 5 冰 / 6 风 / 7 雷（不指定=完全无属性约束）");
+            EquipmentMaterialPolicy = Config.Bind("炼器", "EquipmentMaterialPolicy", Solver.MaterialPolicy.MaxRepeatCount, "材料策略：MaxRepeatCount 最多炼制次数 / LowGradeFirst 低阶材料优先（符文质量确定后再优化）");
             new Harmony("zaohua.autocraft").PatchAll();
             // BepInEx 自带的管理物体在这个游戏里会被销毁，导致插件的 Update/OnGUI 不跑，所以自己建一个常驻物体
             var go = new GameObject("ZaohuaAutoCraft");
