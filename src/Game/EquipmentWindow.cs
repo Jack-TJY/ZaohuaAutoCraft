@@ -12,7 +12,7 @@ namespace ZaohuaAutoCraft
     {
         const int WindowId = 0x5A42;
 
-        Rect rect = new Rect(560, 60, 500, 700);
+        Rect rect = new Rect(520, 60, 560, 700);
 
         bool visible;
 
