@@ -155,5 +155,8 @@ namespace ZaohuaAutoCraft.Solver
 
         /// <summary>求解状态：CP-SAT最优 / CP-SAT可行(限时) / 启发式 / 已证无解 / 未定(超时)。</summary>
         public string Status;
+
+        /// <summary>每轮搜索记录（报告 §15）。</summary>
+        public string RoundLog = "";
     }
 }

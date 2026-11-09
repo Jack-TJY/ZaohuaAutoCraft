@@ -68,6 +68,29 @@ namespace ZaohuaAutoCraft.Solver
         /// <summary>是否为「原始问题确有不可行证明」（报告 §4.2）：只有无 cuts 的 CP-SAT 返回 Infeasible 才置位。</summary>
         bool provenInfeasible;
 
+        /// <summary>当前方案未证明最优（CP-SAT 返回 Feasible 而非 Optimal，报告 §4.2）。</summary>
+        bool notProvenOptimal;
+
+        /// <summary>装填结果（结构化）：报告 §4.1，避免 null 混淆所有失败。</summary>
+        class PackOutcome
+        {
+            public EquipmentSolution Solution;
+            public bool Failed;
+            public bool ProvenImpossible;
+            public Side FailedSide;
+            public Dictionary<string, int> FailCounts;
+        }
+
+        /// <summary>同形状多重集 → 装填结果缓存（报告 §6.2）。</summary>
+        readonly Dictionary<string, Packer.Result> packResultCache = new Dictionary<string, Packer.Result>();
+
+        int packResultHits;
+
+        int packResultMisses;
+
+        /// <summary>每轮搜索记录（报告 §15）。</summary>
+        readonly List<string> roundLog = new List<string>();
+
         int capYang => req.Yang?.Area ?? 0;
 
         int capYin => req.Yin?.Area ?? 0;
@@ -107,8 +130,11 @@ namespace ZaohuaAutoCraft.Solver
                 result.Message = (anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (provenInfeasible ? "当前条件下无可用摆法" : "限时内未找到可用摆法（未证明无解）")) + $"\n[CP-SAT诊断] {CpSatQuantity.LastLog}";
                 result.FoundComboButNoFit = anyNoFit;
             }
-            result.Status = sols.Count > 0 ? (string.IsNullOrEmpty(solvePath) ? "启发式" : solvePath) : (provenInfeasible ? "已证无解" : "未定（限时内未找到/未证明）");
+            result.Status = sols.Count > 0
+                ? ((string.IsNullOrEmpty(solvePath) ? "启发式" : solvePath) + (notProvenOptimal ? "（尚未证明最优）" : ""))
+                : (provenInfeasible ? "已证无解" : "未定（限时内未找到/未证明）");
             result.CombosTried = combosTried;
+            result.RoundLog = string.Join(" | ", roundLog) + $" | 装填缓存命中{packResultHits}/未命中{packResultMisses}";
             return Finish(result);
         }
 
@@ -1311,6 +1337,7 @@ namespace ZaohuaAutoCraft.Solver
                     // 首轮短切片快速反馈；后续轮次用剩余预算（报告 §5.2）
                     double sliceSec = iter == 0 ? Math.Min(0.4, remainMs / 1000.0) : (remainMs / 1000.0) * 0.9;
                     var items1 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, sliceSec, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cuts, null);
+                    roundLog.Add($"阶段1轮{iter} 切片{sliceSec:0.00}s {CpSatQuantity.LastLog}");
                     if (items1 == null || items1.Count == 0)
                     {
                         // 只有原始问题（无 cuts）被证明 Infeasible 才算已证无解（报告 §4.2）
@@ -1322,26 +1349,31 @@ namespace ZaohuaAutoCraft.Solver
                         // 超时(Unknown)：下一轮用更长切片继续（报告 §5.2）
                         continue;
                     }
-                    sol1 = PackItems(items1);
+                    var outcome1 = PackItemsOutcome(items1);
+                    sol1 = outcome1.Solution;
                     if (sol1 != null)
                     {
+                        if (CpSatQuantity.LastStatus == "Feasible")
+                        {
+                            notProvenOptimal = true;
+                        }
                         break;
                     }
-                    var cut = FailingShapeCut(items1);
-                    if (cut == null)
+                    if (!outcome1.ProvenImpossible || outcome1.FailCounts == null)
                     {
-                        return new List<EquipmentSolution>();
+                        // 装填未知（超时）：未证明装不下，不能用它生成排除条件；用更长切片重试
+                        continue;
                     }
-                    cuts.Add(cut);
+                    cuts.Add(new CpSatQuantity.ShapeCut { YinSide = outcome1.FailedSide == Side.Yin, Counts = outcome1.FailCounts });
                 }
                 if (sol1 == null)
                 {
                     return new List<EquipmentSolution>();
                 }
-                // 阶段2：固定阶段1的层数向量，单独优化材料策略 + 省料
+                // 阶段2：固定阶段1的层数向量，单独优化材料策略 + 省料；继承阶段1已证几何排除（报告 §6.3）
                 int[] lv = LevelsOf(sol1.Placements);
                 double s2 = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
-                var items2 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s2, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, null, lv);
+                var items2 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s2, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cuts, lv);
                 if (items2 != null && items2.Count > 0)
                 {
                     var sol2 = PackItems(items2);
@@ -1524,6 +1556,8 @@ namespace ZaohuaAutoCraft.Solver
                         stockLeft[p.Material]++;
                         stockLeft[m]--;
                         placements = tmp;
+                        // 报告 §9.2：接受替换后必须更新比较基准，否则会相对旧基准越换越差
+                        baseKey = RankKey(cand, mode);
                         changed = true;
                         break;
                     }
@@ -1747,7 +1781,24 @@ namespace ZaohuaAutoCraft.Solver
             return top;
         }
 
-        EquipmentSolution PackItems(List<(Material mat, Side side)> items)
+        /// <summary>带缓存的装填（报告 §6.2）：键=盘尺寸+侧+形状多重集（材料ID+数量）。</summary>
+        Packer.Result PackShapes(Grid grid, Side side, List<Material> pieces)
+        {
+            var key = $"{(side == Side.Yang ? "Y" : "N")}|{grid.Width}x{grid.Height}|" + string.Join(",", pieces.GroupBy(p => p.Id).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => g.Key + "x" + g.Count()));
+            if (packResultCache.TryGetValue(key, out var hit))
+            {
+                packResultHits++;
+                return hit;
+            }
+            packResultMisses++;
+            int budget = (int)Math.Max(20L, Math.Min(200L, deadline - clock.ElapsedMilliseconds));
+            var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, budget);
+            packResultCache[key] = packed;
+            return packed;
+        }
+
+        /// <summary>装填：失败时带失败侧/形状计数/是否已证不可行（报告 §6.1，供切割直接用，不再重复装填）。</summary>
+        PackOutcome PackItemsOutcome(List<(Material mat, Side side)> items)
         {
             var sol = new EquipmentSolution();
             foreach (Side side in new[] { Side.Yang, Side.Yin })
@@ -1758,10 +1809,20 @@ namespace ZaohuaAutoCraft.Solver
                     continue;
                 }
                 var grid = side == Side.Yang ? req.Yang : req.Yin;
-                var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, (int)Math.Max(deadline, clock.ElapsedMilliseconds + 200));
+                if (grid == null)
+                {
+                    continue;
+                }
+                var packed = PackShapes(grid, side, pieces);
                 if (!packed.Ok)
                 {
-                    return null;
+                    var counts = new Dictionary<string, int>();
+                    foreach (var p in pieces)
+                    {
+                        counts.TryGetValue(p.Id, out var c);
+                        counts[p.Id] = c + 1;
+                    }
+                    return new PackOutcome { Failed = true, ProvenImpossible = !packed.TimedOut, FailedSide = side, FailCounts = counts };
                 }
                 for (int i = 0; i < pieces.Count; i++)
                 {
@@ -1769,7 +1830,12 @@ namespace ZaohuaAutoCraft.Solver
                     sol.Placements.Add(new Placement { Material = pieces[i], Side = side, X = s.x, Y = s.y, Rotate = s.rotate });
                 }
             }
-            return sol;
+            return new PackOutcome { Solution = sol };
+        }
+
+        EquipmentSolution PackItems(List<(Material mat, Side side)> items)
+        {
+            return PackItemsOutcome(items).Solution;
         }
 
         /// <summary>独立复核：按游戏规则重算属性和符文等级，与方案里的结算对比；同时查越界/重叠/库存。</summary>
