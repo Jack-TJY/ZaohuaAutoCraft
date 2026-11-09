@@ -1707,24 +1707,8 @@ namespace ZaohuaAutoCraft.Solver
         {
             if (req.Unified)
             {
-                // 报告 §6.4：按输入选择生成器——少形状类型 + 多材料（紧盘/鞋子2这类）先用联合几何模型
-                int liveMats = req.Materials.Count(m => m.Stock > 0 && m.Shape.Count > 0 && !m.Attrs.All(v => v == 0));
-                int typeCount = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && !m.Attrs.All(v => v == 0))
-                    .Select(m => Packer.GetType(m.Shape).Key).Distinct().Count();
-                if (typeCount > 0 && typeCount <= 32 && liveMats > 80)
-                {
-                    var jf = SolveJointUnified();
-                    if (jf.Count > 0)
-                    {
-                        solvePath = "联合几何";
-                        foreach (var s in jf)
-                        {
-                            Finalize(s);
-                        }
-                        return jf;
-                    }
-                }
-                var cu = SolveCpSatUnified(deadline);
+                // 阶段1：分解模型（限制预算，避免吃光全部时间，给联合几何留机会）
+                var cu = SolveCpSatUnified((long)(deadline * 0.4));
                 if (cu.Count > 0)
                 {
                     solvePath = "CP-SAT(统一)";
