@@ -484,6 +484,7 @@ namespace ZaohuaAutoCraft
                 status = $"计算中…约 {request.TimeLimitMs / 1000.0:0.#} 秒（符文 {runes.Count} 个，材料 {request.Materials.Count} 种）";
                 var req = request;
                 runningVersion = ++calcVersion;
+                Plugin.Log.LogInfo($"[炼器] 开始计算: 符文{runes.Count} 材料{req.Materials.Count} 目标属性{req.TargetAttr} 策略{req.MaterialPolicy} 时限{req.TimeLimitMs}ms 符文上限[{string.Join(",", runes.ConvertAll(x => x.MaxStacks))}]");
                 running = Task.Run(() => new EquipmentSolver(req).Solve());
             }
             catch (Exception e)
@@ -514,6 +515,7 @@ namespace ZaohuaAutoCraft
                 return;
             }
             result = task.Result;
+            Plugin.Log.LogInfo($"[炼器] 结果: Status={result.Status} Elapsed={result.ElapsedMs}ms 解={result.Solutions?.Count ?? 0} | CP-SAT: {CpSatQuantity.LastLog}");
             if (result.Best == null)
             {
                 status = $"{result.Message}（{result.ElapsedMs} ms）";

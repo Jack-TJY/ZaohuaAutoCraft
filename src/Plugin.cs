@@ -7,7 +7,7 @@ using UnityEngine;
 namespace ZaohuaAutoCraft
 {
     // 炼丹/炼器界面打开时显示「自动摆放」按钮：选丹方/符文 → 算摆法 → 预览 → 摆上（炼制仍由玩家自己点）。
-    [BepInPlugin("zaohua.autocraft", "自动炼丹炼器", "0.3.0")]
+    [BepInPlugin("zaohua.autocraft", "自动炼丹炼器", "0.4.0")]
     public class Plugin : BaseUnityPlugin
     {
         internal static ManualLogSource Log;
