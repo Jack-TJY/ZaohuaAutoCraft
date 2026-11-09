@@ -281,12 +281,11 @@ namespace ZaohuaAutoCraft
             }
             GUILayout.EndScrollView();
 
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("法宝属性", GUILayout.Width(64));
+            GUILayout.Label("法宝属性（不指定 = 无属性约束）：");
             int attrIdx = Mathf.Clamp(Plugin.EquipmentTargetAttr.Value, -1, Attr.Names.Length - 1);
             var attrNames = new List<string> { "不指定" };
             attrNames.AddRange(Attr.Names);
-            int nAttr = GUILayout.SelectionGrid(attrIdx + 1, attrNames.ToArray(), 9);
+            int nAttr = GUILayout.SelectionGrid(attrIdx + 1, attrNames.ToArray(), 5);
             if (nAttr - 1 != attrIdx)
             {
                 Plugin.EquipmentTargetAttr.Value = nAttr - 1;
@@ -295,7 +294,6 @@ namespace ZaohuaAutoCraft
                 applied = null;
                 status = "";
             }
-            GUILayout.EndHorizontal();
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("材料策略", GUILayout.Width(64));

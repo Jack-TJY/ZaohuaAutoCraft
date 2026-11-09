@@ -575,7 +575,8 @@ namespace ZaohuaAutoCraft.Solver
                     model.AddMultiplicationEquality(prod, bVar, usageVar);
                     model.Add(prod <= materials[i].Stock);
                 }
-                obj.Add(LinearExpr.Term(bVar, 1));
+                // 阶段2：次数权重放大到压过品阶/件数，确保「次数优先、同次数低阶」
+                obj.Add(LinearExpr.Term(bVar, fixedLevel != null ? 100000000L : 1L));
             }
             else if (fixedLevel != null)
             {
@@ -618,11 +619,18 @@ namespace ZaohuaAutoCraft.Solver
             }
             if (fixedLevel != null && policy == MaterialPolicy.MaxRepeatCount)
             {
-                // 阶段2：固定等级下，次数优先，同次数最少件数
+                // 阶段2：次数优先；同次数低阶优先(品阶秩)，再最少件数
+                var grades = active.Select(i => materials[i].Grade).Distinct().OrderBy(g => g).ToList();
+                var rank = new Dictionary<int, int>();
+                for (int gi = 0; gi < grades.Count; gi++)
+                {
+                    rank[grades[gi]] = gi;
+                }
                 foreach (int i in active)
                 {
-                    obj.Add(LinearExpr.Term(yangVar[i], -1));
-                    obj.Add(LinearExpr.Term(yinVar[i], -1));
+                    long w = (rank.TryGetValue(materials[i].Grade, out var r2) ? r2 : 0) * 2000L + 1;
+                    obj.Add(LinearExpr.Term(yangVar[i], -w));
+                    obj.Add(LinearExpr.Term(yinVar[i], -w));
                 }
             }
             model.Maximize(LinearExpr.Sum(obj));
