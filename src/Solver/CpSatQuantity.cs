@@ -412,8 +412,8 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 int stock = (int)Math.Min(m.Stock, 10000L);
                 int areaOne = Math.Max(1, m.Shape.Count);
-                int yMax = yang != null ? Math.Min(stock, yang.Area / areaOne) : stock;
-                int nMax = yin != null ? Math.Min(stock, yin.Area / areaOne) : stock;
+                int yMax = yang != null && ShapeFits(yang, m.Shape) ? Math.Min(stock, yang.Area / areaOne) : 0;
+                int nMax = yin != null && ShapeFits(yin, m.Shape) ? Math.Min(stock, yin.Area / areaOne) : 0;
                 if (yMax <= 0 && nMax <= 0)
                 {
                     continue;
@@ -707,6 +707,28 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         /// <summary>逐层覆盖权重：第1层最大，逐层递减，且都严格大于总等级权�?1e6)�?/summary>
+        /// <summary>材料形状是否有任一旋转能放进盘面（报告 §7.1：放不进就把该盘数量固定为 0）。</summary>
+        static bool ShapeFits(Grid grid, List<Cell> shape)
+        {
+            for (int rot = 0; rot < 4; rot++)
+            {
+                int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
+                foreach (var c in shape)
+                {
+                    var r = Packer.Rotate(c, rot);
+                    if (r.X < minX) { minX = r.X; }
+                    if (r.Y < minY) { minY = r.Y; }
+                    if (r.X > maxX) { maxX = r.X; }
+                    if (r.Y > maxY) { maxY = r.Y; }
+                }
+                if (maxX - minX + 1 <= grid.Width && maxY - minY + 1 <= grid.Height)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         static long LayerWeight(int l)
         {
             switch (l)
