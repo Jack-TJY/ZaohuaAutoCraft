@@ -1781,19 +1781,26 @@ namespace ZaohuaAutoCraft.Solver
             return top;
         }
 
-        /// <summary>带缓存的装填（报告 §6.2）：键=盘尺寸+侧+形状多重集（材料ID+数量）。</summary>
+        /// <summary>带缓存的装填（报告 §6.2）：键=盘尺寸+侧+按序的规范形状类型序列（同形不同材料可复用，且 Spot 顺序对齐）。</summary>
         Packer.Result PackShapes(Grid grid, Side side, List<Material> pieces)
         {
-            var key = $"{(side == Side.Yang ? "Y" : "N")}|{grid.Width}x{grid.Height}|" + string.Join(",", pieces.GroupBy(p => p.Id).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => g.Key + "x" + g.Count()));
+            var key = $"{(side == Side.Yang ? "Y" : "N")}|{grid.Width}x{grid.Height}|" + string.Join(",", pieces.Select(p => Packer.GetType(p.Shape).Key));
             if (packResultCache.TryGetValue(key, out var hit))
             {
                 packResultHits++;
                 return hit;
             }
             packResultMisses++;
-            int budget = (int)Math.Max(20L, Math.Min(200L, deadline - clock.ElapsedMilliseconds));
-            var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, budget);
-            packResultCache[key] = packed;
+            // 报告 §4.2：Packer 内部用共享 clock 与【绝对截止】比较，这里必须传绝对时间，不能传相对切片
+            long remain = Math.Max(0L, deadline - clock.ElapsedMilliseconds);
+            long sliceMs = Math.Min(200L, remain);
+            int absDeadline = (int)Math.Min(deadline, clock.ElapsedMilliseconds + sliceMs);
+            var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), clock, absDeadline);
+            // 报告 §4.3：Unknown(超时) 不能当结论缓存，下次可用更多时间重试
+            if (!packed.TimedOut)
+            {
+                packResultCache[key] = packed;
+            }
             return packed;
         }
 
@@ -1819,8 +1826,10 @@ namespace ZaohuaAutoCraft.Solver
                     var counts = new Dictionary<string, int>();
                     foreach (var p in pieces)
                     {
-                        counts.TryGetValue(p.Id, out var c);
-                        counts[p.Id] = c + 1;
+                        // 报告 §4.1：键必须是规范形状类型（与 AddShapeCut 的匹配口径一致），不能用材料 ID
+                        var shapeKey = Packer.GetType(p.Shape).Key;
+                        counts.TryGetValue(shapeKey, out var c);
+                        counts[shapeKey] = c + 1;
                     }
                     return new PackOutcome { Failed = true, ProvenImpossible = !packed.TimedOut, FailedSide = side, FailCounts = counts };
                 }
