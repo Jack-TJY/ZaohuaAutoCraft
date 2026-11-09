@@ -1594,7 +1594,12 @@ namespace ZaohuaAutoCraft.Solver
                     }
                     return cu;
                 }
-                // 统一流程失败：回退到启发式（按优先级组提级）
+                // 指定了法宝属性时，不能回退到忽略属性的启发式（否则会得到错误属性，如要火出金）
+                if (req.TargetAttr >= 0)
+                {
+                    return new List<EquipmentSolution>();
+                }
+                // 未指定属性：回退到启发式（按优先级组提级）
                 mode = EquipmentMode.MaxRuneLevel;
                 if (req.Priority == null || req.Priority.Length != req.Runes.Count)
                 {

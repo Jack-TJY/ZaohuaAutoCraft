@@ -437,6 +437,17 @@ if (Want("equip"))
         var g2 = new int[flyRunes.Count];
         for (int i = 1; i < g2.Length; i++) g2[i] = 1;
         ShowFlow("优先首符文·火·最多次数", g2, 3, MaterialPolicy.MaxRepeatCount);
+
+        // 诊断：不同负火加成下「指定火+最多次数」
+        foreach (var fb in new[] { -50, -200, -1000, -5000 })
+        {
+            var bonus = new int[Attr.Count];
+            bonus[3] = fb;
+            var req = new EquipmentRequest { Materials = equipAll, Runes = flyRunes, Yang = new Grid(10, 10), Yin = new Grid(9, 10), Bonus = bonus, Unified = true, TargetAttr = 3, MaterialPolicy = MaterialPolicy.MaxRepeatCount, TimeLimitMs = 5000, TopK = 1 };
+            var res = new EquipmentSolver(req).Solve();
+            var s = res.Solutions.Count > 0 ? res.Solutions[0] : null;
+            Console.WriteLine($"[诊断·火加成{fb}] {(s == null ? $"无解({res.Message})" : $"{s.PieceCount}件 属性={s.Runes.ItemAttr} 等级[{string.Join(",", s.Runes.Level)}]")} 状态{res.Status}");
+        }
     }
 }
 
