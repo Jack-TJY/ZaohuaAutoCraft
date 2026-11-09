@@ -707,6 +707,12 @@ if (Environment.GetEnvironmentVariable("UTEST") != null)
     RunU("08指定火", new List<Material> { SM2("f", new[] { 0, 0, 0, 2, 0, 0, 0, 0 }, 6, 99), SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99) },
         RR(("r", new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, 1)),
         new Grid(3, 3), new Grid(1, 1), 3, s => s.Runes.ItemAttr == 3 && s.Runes.Level[0] >= 1);
+    // 09 并列归金：水1火1并列 → 成品归金(0)
+    {
+        var mats9 = new List<Material> { SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("fi", new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, 6, 99) };
+        var runes9 = RR(("r", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 1));
+        RunU("09并列归金", mats9, runes9, new Grid(3, 3), new Grid(1, 1), 0, s => s.Runes.ItemAttr == 0 && s.Runes.Level[0] >= 1);
+    }
     Console.WriteLine(failures == 0 ? "[UT] 全部通过" : $"[UT] 失败 {failures} 个");
 }
 
