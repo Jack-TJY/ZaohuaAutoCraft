@@ -475,6 +475,7 @@ if (Want("equip"))
 if (Environment.GetEnvironmentVariable("SHOE") != null)
 {
     Console.WriteLine("===== 鞋子2 配方复现（真实库存）=====");
+    CpSatQuantity.Workers = 8;
     var invPath = Path.Combine(dir, "inventory.json");
     var inv = JsonDocument.Parse(File.ReadAllText(invPath)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
     var invMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, inv.TryGetValue(m.Id, out var c) ? c : 0)).ToList();
@@ -498,6 +499,27 @@ if (Environment.GetEnvironmentVariable("SHOE") != null)
         {
             Console.WriteLine($"   {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 批次{s.Batches} 属性{s.Runes.ItemAttr} 复核{EquipmentSolver.Verify(req, s) ?? "OK"}");
         }
+    }
+    // 联合几何模型（报告 §6）
+    var joint = JointGeometrySolver.Solve(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 30.0, -1, 8);
+    Console.WriteLine($"[鞋子2·联合模型] {joint.Status} {joint.ElapsedMs}ms {joint.Items.Count}件 等级[{string.Join(",", joint.Level)}]");
+    Console.WriteLine($"   模型q: {JointGeometrySolver.LastDebug}");
+    if (joint.Items.Count > 0)
+    {
+        foreach (var g in joint.Items.GroupBy(it => (it.mat, it.side)).OrderBy(g => g.Key.side).ThenBy(g => g.Key.mat.Id))
+        {
+            Console.WriteLine($"    {g.Key.side} {g.Key.mat.Id} 面积{g.Key.mat.Shape.Count} attrs=[{string.Join(",", g.Key.mat.Attrs)}] ×{g.Count()}");
+        }
+        var sol = new EquipmentSolution();
+        foreach (var it in joint.Items)
+        {
+            sol.Placements.Add(new Placement { Material = it.mat, Side = it.side, X = it.x, Y = it.y, Rotate = it.rot });
+        }
+        var jreq = new EquipmentRequest { Materials = invMats, Runes = shoeRunes, Yang = new Grid(7, 10), Yin = new Grid(7, 10), Unified = true, TargetAttr = -1, TimeLimitMs = 30000 };
+        var jev = new RuneEvaluator(shoeRunes, new int[Attr.Count]);
+        sol.Runes = jev.Evaluate(sol.Placements);
+        Console.WriteLine($"   联合模型复核: {EquipmentSolver.Verify(jreq, sol) ?? "OK"}");
+        Console.WriteLine($"   联合模型等级: [{string.Join(",", sol.Runes.Level)}] 属性: [{string.Join(",", jev.SumAttrs(sol.Placements))}]");
     }
     // 诊断：直接看数量解的形状/面积（7x10=70 格）
     var itemsQ = CpSatQuantity.SolveUnified(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 10.0, null, -1, MaterialPolicy.MaxRepeatCount, null, null);
@@ -719,7 +741,7 @@ if (Environment.GetEnvironmentVariable("UTEST") != null)
         int failuresBefore = failures;
         bool ok = s != null && check(s) && EquipmentSolver.Verify(req, s) == null;
         if (!ok) failures++;
-        Console.WriteLine($"[UT {label}] {(s == null ? "无解" : $"等级[{string.Join(",", s.Runes.Level)}] 件{s.PieceCount} 属性{s.Runes.ItemAttr}")} {(ok ? "✓" : "✗")}");
+        Console.WriteLine($"[UT {label}] {(s == null ? "无解" : $"等级[{string.Join(",", s.Runes.Level)}] 件{s.PieceCount} 属性{s.Runes.ItemAttr}")} {(ok ? "✓" : "✗")} | CP: {CpSatQuantity.LastLog}");
     }
     // 01 覆盖优先：(1,1,1) 优于 (5,0,0)
     RunU("01覆盖优先", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("w", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("m", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 6, 99) },

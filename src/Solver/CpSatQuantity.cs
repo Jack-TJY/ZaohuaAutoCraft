@@ -418,7 +418,8 @@ namespace ZaohuaAutoCraft.Solver
                         break;
                     }
                 }
-                if (!helps)
+                // 指定成品属性时不剪枝：并列归金/加权归属需要其他维度参与（报告 §7.1 警告不要乱删材料）
+                if (!helps && desiredAttr < 0)
                 {
                     continue;
                 }

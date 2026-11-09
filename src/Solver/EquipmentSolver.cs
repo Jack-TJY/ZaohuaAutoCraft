@@ -1320,8 +1320,50 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         /// <summary>统一流程：CP-SAT 求解（优先级组+可选属性+材料策略），装不下时加形状切割重求。</summary>
-        List<EquipmentSolution> SolveCpSatUnified()
+        /// <summary>按形状类型联合建模（报告 §6）：几何与数量在同一模型，用于分解路径反复装不下时。</summary>
+        List<EquipmentSolution> SolveJointUnified()
         {
+            try
+            {
+                long remain = deadline - clock.ElapsedMilliseconds;
+                if (remain < 200)
+                {
+                    return new List<EquipmentSolution>();
+                }
+                var cand = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers));
+                if (cand.Items.Count == 0)
+                {
+                    roundLog.Add($"联合几何 {cand.Status} {cand.ElapsedMs}ms 无解");
+                    return new List<EquipmentSolution>();
+                }
+                var sol = new EquipmentSolution();
+                foreach (var it in cand.Items)
+                {
+                    sol.Placements.Add(new Placement { Material = it.mat, Side = it.side, X = it.x, Y = it.y, Rotate = it.rot });
+                }
+                Finalize(sol);
+                string err = Verify(req, sol);
+                roundLog.Add($"联合几何 {cand.Status} {cand.ElapsedMs}ms {cand.Items.Count}件 等级[{string.Join(",", cand.Level)}] 复核{(err ?? "OK")}");
+                if (err != null)
+                {
+                    return new List<EquipmentSolution>();
+                }
+                if (cand.Status == "Feasible")
+                {
+                    notProvenOptimal = true;
+                }
+                return new List<EquipmentSolution> { sol };
+            }
+            catch
+            {
+                return new List<EquipmentSolution>();
+            }
+        }
+
+        List<EquipmentSolution> SolveCpSatUnified(long budgetMs)
+        {
+            // 报告 §6.4：分解路径只用一个受限预算，剩下的留给联合几何生成器
+            long solveDeadline = Math.Min(deadline, clock.ElapsedMilliseconds + Math.Max(100L, budgetMs));
             try
             {
                 // 阶段1：符文质量（先覆盖再升级）；装不下时加形状切割重求（报告 P1-3）
@@ -1329,7 +1371,7 @@ namespace ZaohuaAutoCraft.Solver
                 EquipmentSolution sol1 = null;
                 for (int iter = 0; iter < 4; iter++)
                 {
-                    long remainMs = deadline - clock.ElapsedMilliseconds;
+                    long remainMs = solveDeadline - clock.ElapsedMilliseconds;
                     if (remainMs <= 50)
                     {
                         break;
@@ -1372,7 +1414,7 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 // 阶段2：固定阶段1的层数向量，单独优化材料策略 + 省料；继承阶段1已证几何排除（报告 §6.3）
                 int[] lv = LevelsOf(sol1.Placements);
-                double s2 = Math.Max(0.1, (deadline - clock.ElapsedMilliseconds) / 1000.0);
+                double s2 = Math.Max(0.1, (solveDeadline - clock.ElapsedMilliseconds) / 1000.0);
                 var items2 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s2, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cuts, lv);
                 if (items2 != null && items2.Count > 0)
                 {
@@ -1665,7 +1707,24 @@ namespace ZaohuaAutoCraft.Solver
         {
             if (req.Unified)
             {
-                var cu = SolveCpSatUnified();
+                // 报告 §6.4：按输入选择生成器——少形状类型 + 多材料（紧盘/鞋子2这类）先用联合几何模型
+                int liveMats = req.Materials.Count(m => m.Stock > 0 && m.Shape.Count > 0 && !m.Attrs.All(v => v == 0));
+                int typeCount = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && !m.Attrs.All(v => v == 0))
+                    .Select(m => Packer.GetType(m.Shape).Key).Distinct().Count();
+                if (typeCount > 0 && typeCount <= 32 && liveMats > 80)
+                {
+                    var jf = SolveJointUnified();
+                    if (jf.Count > 0)
+                    {
+                        solvePath = "联合几何";
+                        foreach (var s in jf)
+                        {
+                            Finalize(s);
+                        }
+                        return jf;
+                    }
+                }
+                var cu = SolveCpSatUnified(deadline);
                 if (cu.Count > 0)
                 {
                     solvePath = "CP-SAT(统一)";
@@ -1681,6 +1740,17 @@ namespace ZaohuaAutoCraft.Solver
                         cu[0] = reduced;
                     }
                     return cu;
+                }
+                // 分解路径失败（数量装不下/超时）：尝试按形状类型的联合几何模型（报告 §6.4）
+                var joint = SolveJointUnified();
+                if (joint.Count > 0)
+                {
+                    solvePath = "联合几何";
+                    foreach (var s in joint)
+                    {
+                        Finalize(s);
+                    }
+                    return joint;
                 }
                 // 指定了法宝属性时，不能回退到忽略属性的启发式（否则会得到错误属性，如要火出金）
                 if (req.TargetAttr >= 0)
