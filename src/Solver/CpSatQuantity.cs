@@ -429,6 +429,8 @@ namespace ZaohuaAutoCraft.Solver
             var has2Var = new IntVar[runes.Count];
             var has3Var = new IntVar[runes.Count];
             var has4Var = new IntVar[runes.Count];
+            var has5Var = new IntVar[runes.Count];
+            var has6Var = new IntVar[runes.Count];
             for (int r = 0; r < runes.Count; r++)
             {
                 var rune = runes[r];
@@ -437,6 +439,8 @@ namespace ZaohuaAutoCraft.Solver
                 has2Var[r] = model.NewBoolVar($"h2{r}");
                 has3Var[r] = model.NewBoolVar($"h3{r}");
                 has4Var[r] = model.NewBoolVar($"h4{r}");
+                has5Var[r] = model.NewBoolVar($"h5{r}");
+                has6Var[r] = model.NewBoolVar($"h6{r}");
                 model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(hasVar[r], rune.MaxStacks), LinearExpr.Term(levelVar[r], -1) }) >= 0);
                 model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1), LinearExpr.Term(hasVar[r], -1) }) >= 0);
                 if (rune.MaxStacks >= 2)
@@ -465,6 +469,24 @@ namespace ZaohuaAutoCraft.Solver
                 else
                 {
                     model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has4Var[r], 1) }) == 0);
+                }
+                if (rune.MaxStacks >= 5)
+                {
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has5Var[r], rune.MaxStacks - 4), LinearExpr.Term(levelVar[r], -1) }) >= -4);
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1), LinearExpr.Term(has5Var[r], -5) }) >= 0);
+                }
+                else
+                {
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has5Var[r], 1) }) == 0);
+                }
+                if (rune.MaxStacks >= 6)
+                {
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has6Var[r], rune.MaxStacks - 5), LinearExpr.Term(levelVar[r], -1) }) >= -5);
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1), LinearExpr.Term(has6Var[r], -6) }) >= 0);
+                }
+                else
+                {
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has6Var[r], 1) }) == 0);
                 }
                 for (int d = 0; d < Attr.Count; d++)
                 {
@@ -564,6 +586,8 @@ namespace ZaohuaAutoCraft.Solver
                         grp.Add(LinearExpr.Term(has2Var[r], gw * 1000L * 1000000L));
                         grp.Add(LinearExpr.Term(has3Var[r], gw * 10L * 1000000L));
                         grp.Add(LinearExpr.Term(has4Var[r], gw * 5L * 1000000L));
+                        grp.Add(LinearExpr.Term(has5Var[r], gw * 3L * 1000000L));
+                        grp.Add(LinearExpr.Term(has6Var[r], gw * 2L * 1000000L));
                         grp.Add(LinearExpr.Term(levelVar[r], gw * 1000000L));
                     }
                     obj.Add(LinearExpr.Sum(grp));
