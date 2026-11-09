@@ -484,7 +484,7 @@ namespace ZaohuaAutoCraft
                 status = $"计算中…约 {request.TimeLimitMs / 1000.0:0.#} 秒（符文 {runes.Count} 个，材料 {request.Materials.Count} 种）";
                 var req = request;
                 runningVersion = ++calcVersion;
-                Plugin.Log.LogInfo($"[炼器] 开始计算: 符文{runes.Count} 材料{req.Materials.Count} 目标属性{req.TargetAttr} 策略{req.MaterialPolicy} 时限{req.TimeLimitMs}ms 符文上限[{string.Join(",", runes.ConvertAll(x => x.MaxStacks))}]");
+                Plugin.Log.LogInfo($"[炼器] 开始计算: 符文{runes.Count} 材料{req.Materials.Count} 目标属性{req.TargetAttr} 策略{req.MaterialPolicy} 时限{req.TimeLimitMs}ms 线程{CpSatQuantity.Workers} 阳盘{req.Yang?.Width}x{req.Yang?.Height} 阴盘{req.Yin?.Width}x{req.Yin?.Height} 上限[{string.Join(",", runes.ConvertAll(x => x.MaxStacks))}] 需求[{string.Join(";", runes.ConvertAll(x => Game.DrugBridge.AttrText(x.Requirement)))}]");
                 running = Task.Run(() => new EquipmentSolver(req).Solve());
             }
             catch (Exception e)
