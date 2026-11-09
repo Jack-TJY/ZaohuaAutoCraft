@@ -37,6 +37,11 @@ namespace ZaohuaAutoCraft
 
         Task<EquipmentSolveResult> running;
 
+        /// <summary>设置变更计数：变更后旧任务结果作废（报告 P1-5）。</summary>
+        int calcVersion;
+
+        int runningVersion;
+
         EquipmentSolveResult result;
 
         int chosen;
@@ -88,6 +93,7 @@ namespace ZaohuaAutoCraft
                 {
                     RefreshFurnace();
                     result = null;
+                    calcVersion++;
                     chosen = 0;
                     applied = null;
                     status = "";
@@ -272,6 +278,7 @@ namespace ZaohuaAutoCraft
                 if (priority[i] != oldPri)
                 {
                     result = null;
+                    calcVersion++;
                     chosen = 0;
                     applied = null;
                     status = "";
@@ -290,6 +297,7 @@ namespace ZaohuaAutoCraft
             {
                 Plugin.EquipmentTargetAttr.Value = nAttr - 1;
                 result = null;
+                calcVersion++;
                 chosen = 0;
                 applied = null;
                 status = "";
@@ -303,6 +311,7 @@ namespace ZaohuaAutoCraft
             {
                 Plugin.EquipmentMaterialPolicy.Value = (MaterialPolicy)nPol;
                 result = null;
+                calcVersion++;
                 chosen = 0;
                 applied = null;
                 status = "";
@@ -434,6 +443,7 @@ namespace ZaohuaAutoCraft
                 chosen = 0;
                 status = $"计算中…约 {request.TimeLimitMs / 1000.0:0.#} 秒（符文 {runes.Count} 个，材料 {request.Materials.Count} 种）";
                 var req = request;
+                runningVersion = ++calcVersion;
                 running = Task.Run(() => new EquipmentSolver(req).Solve());
             }
             catch (Exception e)
@@ -447,6 +457,16 @@ namespace ZaohuaAutoCraft
         {
             var task = running;
             running = null;
+            if (runningVersion != calcVersion)
+            {
+                // 计算期间设置已变更，丢弃过期结果（报告 P1-5）
+                result = null;
+                calcVersion++;
+                chosen = 0;
+                applied = null;
+                status = "设置已变更，旧计算结果已作废，请重新计算";
+                return;
+            }
             if (task.IsFaulted)
             {
                 status = "计算出错：" + task.Exception?.GetBaseException().Message;
