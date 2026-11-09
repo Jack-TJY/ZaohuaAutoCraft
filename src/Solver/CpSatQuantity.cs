@@ -11,6 +11,8 @@ namespace ZaohuaAutoCraft.Solver
     /// </summary>
     public static class CpSatQuantity
     {
+        /// <summary>最近一次 SolveUnified 的诊断信息（模型规模/状态/耗时），供插件日志输出。</summary>
+        public static string LastLog = "";
         /// <summary>形状切割：某侧的某个形状多重集装不下，需要至少一个形状件数减少�?/summary>
         public class ShapeCut
         {
@@ -668,6 +670,7 @@ namespace ZaohuaAutoCraft.Solver
             var solver = new CpSolver();
             solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:1,random_seed:0";
             var status = solver.Solve(model);
+            LastLog = $"状态={status} 符文={runes.Count} 材料={active.Count} 时限={timeLimitSec:0.0}s 实际={solver.WallTime():0.0}s";
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {
                 return null;

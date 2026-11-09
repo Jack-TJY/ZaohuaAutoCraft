@@ -101,7 +101,7 @@ namespace ZaohuaAutoCraft.Solver
             result.TimedOut = timedOut;
             if (sols.Count == 0)
             {
-                result.Message = anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文" + ShortfallText());
+                result.Message = (anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文" + ShortfallText())) + $"\n[CP-SAT诊断] {CpSatQuantity.LastLog}";
                 result.FoundComboButNoFit = anyNoFit;
             }
             result.Status = sols.Count > 0 ? (string.IsNullOrEmpty(solvePath) ? "启发式" : solvePath) : (timedOut ? "未定（超时）" : "已证无解");
