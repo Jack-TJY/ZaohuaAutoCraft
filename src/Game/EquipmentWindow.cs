@@ -27,6 +27,9 @@ namespace ZaohuaAutoCraft
 
         bool[] priority = new bool[0];
 
+        /// <summary>优先符文的排序（符文下标，越前优先级越高）。报告 P1-2。</summary>
+        List<int> prioOrder = new List<int>();
+
         int selectedType;
 
         string furnaceText = "";
@@ -268,7 +271,7 @@ namespace ZaohuaAutoCraft
             {
                 priority = new bool[runes.Count];
             }
-            GUILayout.Label("符文优先级（勾选=优先组，可多选；未勾选=较低优先组）：");
+            GUILayout.Label("符文优先级（勾选=优先组，可多选、可调顺序；未勾选=较低优先组）：");
             for (int i = 0; i < runes.Count; i++)
             {
                 var r = runes[i];
@@ -277,6 +280,17 @@ namespace ZaohuaAutoCraft
                 priority[i] = GUILayout.Toggle(priority[i], "优先", GUILayout.Width(56));
                 if (priority[i] != oldPri)
                 {
+                    if (priority[i])
+                    {
+                        if (!prioOrder.Contains(i))
+                        {
+                            prioOrder.Add(i);
+                        }
+                    }
+                    else
+                    {
+                        prioOrder.Remove(i);
+                    }
                     result = null;
                     calcVersion++;
                     chosen = 0;
@@ -285,6 +299,38 @@ namespace ZaohuaAutoCraft
                 }
                 GUILayout.Label($"{r.Name}  要求 {Game.DrugBridge.AttrText(r.Requirement)}  满级 {r.MaxStacks}");
                 GUILayout.EndHorizontal();
+            }
+            // 优先顺序（上移/下移）：报告 P1-2
+            if (prioOrder.Count > 1)
+            {
+                GUILayout.Label("优先顺序（越前优先级越高）：");
+                for (int k = 0; k < prioOrder.Count; k++)
+                {
+                    int ri = prioOrder[k];
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label($"{k + 1}. {runes[ri].Name}", GUILayout.Width(150));
+                    if (k > 0 && GUILayout.Button("▲ 上移", GUILayout.Width(60)))
+                    {
+                        int tmp = prioOrder[k - 1];
+                        prioOrder[k - 1] = prioOrder[k];
+                        prioOrder[k] = tmp;
+                        result = null;
+                        calcVersion++;
+                        chosen = 0;
+                        applied = null;
+                    }
+                    if (k < prioOrder.Count - 1 && GUILayout.Button("▼ 下移", GUILayout.Width(60)))
+                    {
+                        int tmp = prioOrder[k + 1];
+                        prioOrder[k + 1] = prioOrder[k];
+                        prioOrder[k] = tmp;
+                        result = null;
+                        calcVersion++;
+                        chosen = 0;
+                        applied = null;
+                    }
+                    GUILayout.EndHorizontal();
+                }
             }
             GUILayout.EndScrollView();
 
@@ -411,18 +457,12 @@ namespace ZaohuaAutoCraft
                     return;
                 }
                 var pg = new int[runes.Count];
-                bool anyPri = false;
+                // 按 prioOrder 顺序分配严格优先级组 0,1,2,…；未优先符文排在最后一组
+                int lowGroup = Math.Max(0, prioOrder.Count);
                 for (int i = 0; i < runes.Count; i++)
                 {
-                    if (priority.Length == runes.Count && priority[i])
-                    {
-                        anyPri = true;
-                    }
-                }
-                for (int i = 0; i < runes.Count; i++)
-                {
-                    bool p = priority.Length == runes.Count && priority[i];
-                    pg[i] = anyPri && !p ? 1 : 0;
+                    int idx = prioOrder.IndexOf(i);
+                    pg[i] = idx >= 0 ? idx : lowGroup;
                 }
                 request = new EquipmentRequest
                 {

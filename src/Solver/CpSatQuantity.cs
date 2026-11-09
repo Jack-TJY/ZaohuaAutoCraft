@@ -571,7 +571,7 @@ namespace ZaohuaAutoCraft.Solver
                     long gw = 1;
                     for (int k = 0; k < maxGroup - g; k++)
                     {
-                        gw *= 1000;  // 组间权重：高优先组严格压过低优先�?
+                        gw *= 10;  // 组间权重：高优先组严格压过低优先�?
                     }
                     var grp = new List<LinearExpr>();
                     for (int r = 0; r < runes.Count; r++)
