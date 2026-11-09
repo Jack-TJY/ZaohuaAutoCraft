@@ -446,19 +446,23 @@ namespace ZaohuaAutoCraft.Solver
                     {
                         continue;
                     }
-                    var terms = new List<LinearExpr>();
-                    foreach (int i in active)
+                    // 逐层阈值：只有覆盖到第 l 层时才要求属性 >= l×需求（未激活符文不强制属性非负）
+                    for (int l = 1; l <= rune.MaxStacks; l++)
                     {
-                        int a = materials[i].Attrs[d];
-                        if (a == 0)
+                        var lt = new List<LinearExpr>();
+                        foreach (int i in active)
                         {
-                            continue;
+                            int a = materials[i].Attrs[d];
+                            if (a == 0)
+                            {
+                                continue;
+                            }
+                            lt.Add(LinearExpr.Term(yangVar[i], a));
+                            lt.Add(LinearExpr.Term(yinVar[i], -a));
                         }
-                        terms.Add(LinearExpr.Term(yangVar[i], a));
-                        terms.Add(LinearExpr.Term(yinVar[i], -a));
+                        lt.Add(LinearExpr.Term(hasL[r][l], -(long)req * l - 10000000L));
+                        model.Add(LinearExpr.Sum(lt) >= -bonus[d] - 10000000L);
                     }
-                    terms.Add(LinearExpr.Term(levelVar[r], -req));
-                    model.Add(LinearExpr.Sum(terms) >= -bonus[d]);
                 }
             }
             // 阶段2：固定第一阶段已选层数向量，再单独优化材料策�?省料
@@ -504,7 +508,12 @@ namespace ZaohuaAutoCraft.Solver
                         model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(maxS, 1), LinearExpr.Term(sVar[d], -1), LinearExpr.Term(eq[d], 1000000L) }) >= 1);
                     }
                     var tie2 = model.NewBoolVar("tie2");
-                    var eqSum = eq.Select(e => LinearExpr.Term(e, 1)).ToList();
+                    // 并列归金只适用于非加权维度(金水木火土)；冰风雷并列归先者，不归金
+                    var eqSum = new List<LinearExpr>();
+                    for (int d = 0; d < 5; d++)
+                    {
+                        eqSum.Add(LinearExpr.Term(eq[d], 1));
+                    }
                     eqSum.Add(LinearExpr.Term(tie2, -2));
                     model.Add(LinearExpr.Sum(eqSum) >= 0);
                     model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(eq[0], 1), LinearExpr.Term(tie2, 1) }) >= 1);

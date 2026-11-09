@@ -1295,14 +1295,29 @@ namespace ZaohuaAutoCraft.Solver
         {
             try
             {
-                // 阶段1：符文质量（先覆盖再升级），占约 60% 预算
-                double s1 = Math.Max(0.1, (deadline * 0.6 - clock.ElapsedMilliseconds) / 1000.0);
-                var items1 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s1, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, null, null);
-                if (items1 == null || items1.Count == 0)
+                // 阶段1：符文质量（先覆盖再升级）；装不下时加形状切割重求（报告 P1-3）
+                var cuts = new List<CpSatQuantity.ShapeCut>();
+                EquipmentSolution sol1 = null;
+                for (int iter = 0; iter < 3; iter++)
                 {
-                    return new List<EquipmentSolution>();
+                    double s1 = Math.Max(0.1, (deadline * 0.6 - clock.ElapsedMilliseconds) / 1000.0);
+                    var items1 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s1, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cuts, null);
+                    if (items1 == null || items1.Count == 0)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    sol1 = PackItems(items1);
+                    if (sol1 != null)
+                    {
+                        break;
+                    }
+                    var cut = FailingShapeCut(items1);
+                    if (cut == null)
+                    {
+                        return new List<EquipmentSolution>();
+                    }
+                    cuts.Add(cut);
                 }
-                var sol1 = PackItems(items1);
                 if (sol1 == null)
                 {
                     return new List<EquipmentSolution>();
@@ -1789,7 +1804,7 @@ namespace ZaohuaAutoCraft.Solver
                     return $"符文 {req.Runes[i].Id} 等级不一致";
                 }
             }
-            if (req.Mode == EquipmentMode.MaxAttr && req.TargetAttr >= 0 && RuneEvaluator.ItemAttrOf(expect.FinalAttrs) != req.TargetAttr)
+            if (req.TargetAttr >= 0 && RuneEvaluator.ItemAttrOf(expect.FinalAttrs) != req.TargetAttr)
             {
                 return $"目标属性未达成（{Attr.Names[req.TargetAttr]}）";
             }

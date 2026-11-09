@@ -676,6 +676,10 @@ if (Environment.GetEnvironmentVariable("UTEST") != null)
     RunU("03部分激活", new List<Material> { SM2("g", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 6, 99), SM2("wa", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 6, 99) },
         RR(("a", new[] { 1, 0, 0, 0, 0, 0, 0, 0 }, 1), ("b", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 1), ("c", new[] { 0, 0, 1, 0, 0, 0, 0, 0 }, 1)),
         new Grid(3, 3), new Grid(1, 1), -1, s => s.Runes.ActiveCount == 2);
+    // 04 未激活符文不强制属性非负：单材料火5水-1，符文火1+水1 → 火5层水0层可行（不再误报无解）
+    RunU("04未激活不强制非负", new List<Material> { SM2("m", new[] { 0, -1, 0, 5, 0, 0, 0, 0 }, 6, 99) },
+        RR(("fire", new[] { 0, 0, 0, 1, 0, 0, 0, 0 }, 5), ("water", new[] { 0, 1, 0, 0, 0, 0, 0, 0 }, 5)),
+        new Grid(1, 1), new Grid(1, 1), -1, s => s.Runes.Level[0] >= 1 && s.Runes.Level[1] == 0);
     // 05 优先级 A>B：A 等级不低于 B
     {
         var req5 = new EquipmentRequest
