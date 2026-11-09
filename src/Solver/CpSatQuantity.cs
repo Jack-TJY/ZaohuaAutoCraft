@@ -428,6 +428,7 @@ namespace ZaohuaAutoCraft.Solver
             var hasVar = new IntVar[runes.Count];
             var has2Var = new IntVar[runes.Count];
             var has3Var = new IntVar[runes.Count];
+            var has4Var = new IntVar[runes.Count];
             for (int r = 0; r < runes.Count; r++)
             {
                 var rune = runes[r];
@@ -435,6 +436,7 @@ namespace ZaohuaAutoCraft.Solver
                 hasVar[r] = model.NewBoolVar($"h{r}");
                 has2Var[r] = model.NewBoolVar($"h2{r}");
                 has3Var[r] = model.NewBoolVar($"h3{r}");
+                has4Var[r] = model.NewBoolVar($"h4{r}");
                 model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(hasVar[r], rune.MaxStacks), LinearExpr.Term(levelVar[r], -1) }) >= 0);
                 model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1), LinearExpr.Term(hasVar[r], -1) }) >= 0);
                 if (rune.MaxStacks >= 2)
@@ -454,6 +456,15 @@ namespace ZaohuaAutoCraft.Solver
                 else
                 {
                     model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has3Var[r], 1) }) == 0);
+                }
+                if (rune.MaxStacks >= 4)
+                {
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has4Var[r], rune.MaxStacks - 3), LinearExpr.Term(levelVar[r], -1) }) >= -3);
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(levelVar[r], 1), LinearExpr.Term(has4Var[r], -4) }) >= 0);
+                }
+                else
+                {
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(has4Var[r], 1) }) == 0);
                 }
                 for (int d = 0; d < Attr.Count; d++)
                 {
@@ -552,6 +563,7 @@ namespace ZaohuaAutoCraft.Solver
                         grp.Add(LinearExpr.Term(hasVar[r], gw * 100000L * 1000000L));
                         grp.Add(LinearExpr.Term(has2Var[r], gw * 1000L * 1000000L));
                         grp.Add(LinearExpr.Term(has3Var[r], gw * 10L * 1000000L));
+                        grp.Add(LinearExpr.Term(has4Var[r], gw * 5L * 1000000L));
                         grp.Add(LinearExpr.Term(levelVar[r], gw * 1000000L));
                     }
                     obj.Add(LinearExpr.Sum(grp));
