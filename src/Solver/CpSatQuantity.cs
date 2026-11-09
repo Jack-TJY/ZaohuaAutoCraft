@@ -13,6 +13,9 @@ namespace ZaohuaAutoCraft.Solver
     {
         /// <summary>最近一次 SolveUnified 的诊断信息（模型规模/状态/耗时），供插件日志输出。</summary>
         public static string LastLog = "";
+
+        /// <summary>最近一次 SolveUnified 的 CP-SAT 状态（Optimal/Feasible/Infeasible/Unknown）。</summary>
+        public static string LastStatus = "";
         /// <summary>形状切割：某侧的某个形状多重集装不下，需要至少一个形状件数减少�?/summary>
         public class ShapeCut
         {
@@ -405,8 +408,15 @@ namespace ZaohuaAutoCraft.Solver
                     continue;
                 }
                 int stock = (int)Math.Min(m.Stock, 10000L);
-                yangVar[i] = model.NewIntVar(0, stock, $"y{i}");
-                yinVar[i] = model.NewIntVar(0, stock, $"n{i}");
+                int areaOne = Math.Max(1, m.Shape.Count);
+                int yMax = yang != null ? Math.Min(stock, yang.Area / areaOne) : stock;
+                int nMax = yin != null ? Math.Min(stock, yin.Area / areaOne) : stock;
+                if (yMax <= 0 && nMax <= 0)
+                {
+                    continue;
+                }
+                yangVar[i] = model.NewIntVar(0, yMax, $"y{i}");
+                yinVar[i] = model.NewIntVar(0, nMax, $"n{i}");
                 active.Add(i);
                 model.Add(yangVar[i] + yinVar[i] <= stock);
             }
@@ -670,6 +680,7 @@ namespace ZaohuaAutoCraft.Solver
             var solver = new CpSolver();
             solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:1,random_seed:0";
             var status = solver.Solve(model);
+            LastStatus = status.ToString();
             LastLog = $"状态={status} 符文={runes.Count} 材料={active.Count} 时限={timeLimitSec:0.0}s 实际={solver.WallTime():0.0}s";
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {

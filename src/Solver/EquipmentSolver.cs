@@ -65,6 +65,9 @@ namespace ZaohuaAutoCraft.Solver
 
         bool anyNoFit;
 
+        /// <summary>是否为「原始问题确有不可行证明」（报告 §4.2）：只有无 cuts 的 CP-SAT 返回 Infeasible 才置位。</summary>
+        bool provenInfeasible;
+
         int capYang => req.Yang?.Area ?? 0;
 
         int capYin => req.Yin?.Area ?? 0;
@@ -101,10 +104,10 @@ namespace ZaohuaAutoCraft.Solver
             result.TimedOut = timedOut;
             if (sols.Count == 0)
             {
-                result.Message = (anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (timedOut ? "超时，未找到摆法" : "现有材料凑不出所选符文" + ShortfallText())) + $"\n[CP-SAT诊断] {CpSatQuantity.LastLog}";
+                result.Message = (anyNoFit ? "属性能凑出，但形状放不进当前锻造锤" : (provenInfeasible ? "当前条件下无可用摆法" : "限时内未找到可用摆法（未证明无解）")) + $"\n[CP-SAT诊断] {CpSatQuantity.LastLog}";
                 result.FoundComboButNoFit = anyNoFit;
             }
-            result.Status = sols.Count > 0 ? (string.IsNullOrEmpty(solvePath) ? "启发式" : solvePath) : (timedOut ? "未定（超时）" : "已证无解");
+            result.Status = sols.Count > 0 ? (string.IsNullOrEmpty(solvePath) ? "启发式" : solvePath) : (provenInfeasible ? "已证无解" : "未定（限时内未找到/未证明）");
             result.CombosTried = combosTried;
             return Finish(result);
         }
@@ -1298,13 +1301,26 @@ namespace ZaohuaAutoCraft.Solver
                 // 阶段1：符文质量（先覆盖再升级）；装不下时加形状切割重求（报告 P1-3）
                 var cuts = new List<CpSatQuantity.ShapeCut>();
                 EquipmentSolution sol1 = null;
-                for (int iter = 0; iter < 3; iter++)
+                for (int iter = 0; iter < 4; iter++)
                 {
-                    double s1 = Math.Max(0.1, (deadline * 0.6 - clock.ElapsedMilliseconds) / 1000.0);
-                    var items1 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, s1, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cuts, null);
+                    long remainMs = deadline - clock.ElapsedMilliseconds;
+                    if (remainMs <= 50)
+                    {
+                        break;
+                    }
+                    // 首轮短切片快速反馈；后续轮次用剩余预算（报告 §5.2）
+                    double sliceSec = iter == 0 ? Math.Min(0.4, remainMs / 1000.0) : (remainMs / 1000.0) * 0.9;
+                    var items1 = CpSatQuantity.SolveUnified(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, sliceSec, req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cuts, null);
                     if (items1 == null || items1.Count == 0)
                     {
-                        return new List<EquipmentSolution>();
+                        // 只有原始问题（无 cuts）被证明 Infeasible 才算已证无解（报告 §4.2）
+                        if (cuts.Count == 0 && CpSatQuantity.LastStatus == "Infeasible")
+                        {
+                            provenInfeasible = true;
+                            return new List<EquipmentSolution>();
+                        }
+                        // 超时(Unknown)：下一轮用更长切片继续（报告 §5.2）
+                        continue;
                     }
                     sol1 = PackItems(items1);
                     if (sol1 != null)
