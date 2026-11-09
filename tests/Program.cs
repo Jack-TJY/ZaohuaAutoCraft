@@ -429,7 +429,7 @@ if (Want("equip"))
             var res = new EquipmentSolver(req).Solve();
             if (res.Solutions.Count == 0) { Console.WriteLine($"[统一流程·{label}] 无解 {res.Message}"); return; }
             var s = res.Solutions[0];
-            Console.WriteLine($"[统一流程·{label}] {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 属性={s.Runes.ItemAttr} 批次{s.Batches} 状态{res.Status} 复核{(EquipmentSolver.Verify(req, s) ?? "OK")}");
+            Console.WriteLine($"[统一流程·{label}] 解{res.Solutions.Count}个 {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 属性={s.Runes.ItemAttr} 批次{s.Batches} 状态{res.Status} 复核{(EquipmentSolver.Verify(req, s) ?? "OK")}");
         }
         ShowFlow("不指定·最多次数", null, -1, MaterialPolicy.MaxRepeatCount);
         ShowFlow("火·最多次数", null, 3, MaterialPolicy.MaxRepeatCount);

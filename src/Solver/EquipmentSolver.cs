@@ -1316,7 +1316,13 @@ namespace ZaohuaAutoCraft.Solver
                     var sol2 = PackItems(items2);
                     if (sol2 != null)
                     {
-                        return new List<EquipmentSolution> { sol2 };
+                        // 多方案：阶段2（省料优先）排第一，阶段1（质量优先、可能不同材料）作为备选
+                        var list = new List<EquipmentSolution> { sol2 };
+                        if (!SameUsage(sol1, sol2))
+                        {
+                            list.Add(sol1);
+                        }
+                        return list;
                     }
                 }
                 return new List<EquipmentSolution> { sol1 };
@@ -1332,6 +1338,13 @@ namespace ZaohuaAutoCraft.Solver
         {
             var attrs = eval.SumAttrs(placements);
             return eval.Evaluate(attrs).Level;
+        }
+
+        /// <summary>两个方案的阴阳材料用量是否完全相同（多方案去重用）。</summary>
+        static bool SameUsage(EquipmentSolution a, EquipmentSolution b)
+        {
+            string Key(EquipmentSolution s) => string.Join(",", s.Placements.GroupBy(p => p.Material.Id + "@" + (int)p.Side).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => g.Key + "x" + g.Count()));
+            return Key(a) == Key(b);
         }
 
         /// <summary>按模式找基座：最低品阶从低到高试品阶门槛；其余用全材料最少材料基座。</summary>
