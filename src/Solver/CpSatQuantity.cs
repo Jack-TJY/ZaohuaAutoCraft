@@ -390,6 +390,18 @@ namespace ZaohuaAutoCraft.Solver
             var yangVar = new IntVar[materials.Count];
             var yinVar = new IntVar[materials.Count];
             var active = new List<int>();
+            // 符文实际用到的属性维度（报告 §7.1：不参与任何需求、也不能抵消的材料可剪枝）
+            var needed = new bool[Attr.Count];
+            foreach (var rn in runes)
+            {
+                for (int d = 0; d < Attr.Count; d++)
+                {
+                    if (rn.Requirement[d] > 0)
+                    {
+                        needed[d] = true;
+                    }
+                }
+            }
             for (int i = 0; i < materials.Count; i++)
             {
                 var m = materials[i];
@@ -400,7 +412,7 @@ namespace ZaohuaAutoCraft.Solver
                 bool helps = false;
                 for (int d = 0; d < Attr.Count; d++)
                 {
-                    if (m.Attrs[d] != 0)
+                    if (needed[d] && m.Attrs[d] != 0)
                     {
                         helps = true;
                         break;

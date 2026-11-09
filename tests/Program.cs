@@ -471,6 +471,51 @@ if (Want("equip"))
     }
 }
 
+// 4.5 鞋子2 配方复现（真实库存 + 7x10 盘面 + 5 符文，参数取自游戏日志）
+if (Environment.GetEnvironmentVariable("SHOE") != null)
+{
+    Console.WriteLine("===== 鞋子2 配方复现（真实库存）=====");
+    var invPath = Path.Combine(dir, "inventory.json");
+    var inv = JsonDocument.Parse(File.ReadAllText(invPath)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+    var invMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, inv.TryGetValue(m.Id, out var c) ? c : 0)).ToList();
+    Console.WriteLine($"  有效材料 {invMats.Count(m => m.Stock > 0)}/{invMats.Count} 种");
+    var shoeRunes = new List<Rune>
+    {
+        new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
+        new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
+        new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
+        new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
+        new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
+    };
+    foreach (var pol in new[] { MaterialPolicy.MaxRepeatCount, MaterialPolicy.LowGradeFirst })
+    {
+        var req = new EquipmentRequest { Materials = invMats, Runes = shoeRunes, Yang = new Grid(7, 10), Yin = new Grid(7, 10), Unified = true, TargetAttr = -1, MaterialPolicy = pol, TimeLimitMs = 30000, TopK = 1 };
+        var res = new EquipmentSolver(req).Solve();
+        Console.WriteLine($"[鞋子2·{pol}] {res.Status} {res.ElapsedMs}ms 解{res.Solutions.Count}");
+        Console.WriteLine($"   诊断: {CpSatQuantity.LastLog}");
+        Console.WriteLine($"   轮次: {res.RoundLog}");
+        foreach (var s in res.Solutions)
+        {
+            Console.WriteLine($"   {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 批次{s.Batches} 属性{s.Runes.ItemAttr} 复核{EquipmentSolver.Verify(req, s) ?? "OK"}");
+        }
+    }
+    // 诊断：直接看数量解的形状/面积（7x10=70 格）
+    var itemsQ = CpSatQuantity.SolveUnified(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 10.0, null, -1, MaterialPolicy.MaxRepeatCount, null, null);
+    Console.WriteLine($"[鞋子2·数量诊断] {CpSatQuantity.LastLog}");
+    if (itemsQ != null)
+    {
+        foreach (Side sd in new[] { Side.Yang, Side.Yin })
+        {
+            var ps = itemsQ.Where(x => x.side == sd).ToList();
+            Console.WriteLine($"  {sd}: {ps.Count}件 面积{ps.Sum(x => x.mat.Shape.Count)}/70");
+            foreach (var g in ps.GroupBy(x => x.mat).OrderByDescending(g => g.Key.Price))
+            {
+                Console.WriteLine($"    {g.Key.Id} 面积{g.Key.Shape.Count} 价{g.Key.Price} attrs=[{string.Join(",", g.Key.Attrs)}] ×{g.Count()}");
+            }
+        }
+    }
+}
+
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）
 if (Environment.GetEnvironmentVariable("CPSAT") != null)
 {
