@@ -446,23 +446,21 @@ namespace ZaohuaAutoCraft.Solver
                     {
                         continue;
                     }
-                    // 逐层阈值：只有覆盖到第 l 层时才要求属性 >= l×需求（未激活符文不强制属性非负）
-                    for (int l = 1; l <= rune.MaxStacks; l++)
+                    // 属性阈值：未激活(hasL[1]=0)时不强制属性非负；激活时要求 attrs >= req*level
+                    var lt = new List<LinearExpr>();
+                    foreach (int i in active)
                     {
-                        var lt = new List<LinearExpr>();
-                        foreach (int i in active)
+                        int a = materials[i].Attrs[d];
+                        if (a == 0)
                         {
-                            int a = materials[i].Attrs[d];
-                            if (a == 0)
-                            {
-                                continue;
-                            }
-                            lt.Add(LinearExpr.Term(yangVar[i], a));
-                            lt.Add(LinearExpr.Term(yinVar[i], -a));
+                            continue;
                         }
-                        lt.Add(LinearExpr.Term(hasL[r][l], -(long)req * l - 10000000L));
-                        model.Add(LinearExpr.Sum(lt) >= -bonus[d] - 10000000L);
+                        lt.Add(LinearExpr.Term(yangVar[i], a));
+                        lt.Add(LinearExpr.Term(yinVar[i], -a));
                     }
+                    lt.Add(LinearExpr.Term(levelVar[r], -req));
+                    lt.Add(LinearExpr.Term(hasL[r][1], -10000000L));
+                    model.Add(LinearExpr.Sum(lt) >= -bonus[d] - 10000000L);
                 }
             }
             // 阶段2：固定第一阶段已选层数向量，再单独优化材料策�?省料
