@@ -32,6 +32,8 @@ namespace ZaohuaAutoCraft
 
         internal static ConfigEntry<Solver.MaterialPolicy> EquipmentMaterialPolicy;
 
+        internal static ConfigEntry<int> EquipmentWorkers;
+
         private void Awake()
         {
             Log = Logger;
@@ -47,6 +49,8 @@ namespace ZaohuaAutoCraft
             EquipmentMode = Config.Bind("炼器", "EquipmentMode", Solver.EquipmentMode.MinPieces, "默认模式：MaxActiveRunes 满足最多符文 / MaxRuneLevel 指定符文满级 / MinPieces 最少材料 / LowGrade 低阶优先 / MaxBatches 最多炼制次数 / MaxAttr 指定属性最大");
             EquipmentTargetAttr = Config.Bind("炼器", "EquipmentTargetAttr", -1, "法宝属性：-1 不指定 / 0 金 / 1 水 / 2 木 / 3 火 / 4 土 / 5 冰 / 6 风 / 7 雷（不指定=完全无属性约束）");
             EquipmentMaterialPolicy = Config.Bind("炼器", "EquipmentMaterialPolicy", Solver.MaterialPolicy.MaxRepeatCount, "材料策略：MaxRepeatCount 最多炼制次数 / LowGradeFirst 低阶材料优先（符文质量确定后再优化）");
+            EquipmentWorkers = Config.Bind("炼器", "EquipmentWorkers", 0, "炼器 CP-SAT 搜索线程数：0 = 自动（按 CPU 核数，最多 8）；1 = 单线程（结果最稳定）；越大越快但结果可能有细微差异");
+            Solver.CpSatQuantity.Workers = EquipmentWorkers.Value <= 0 ? System.Math.Min(8, System.Math.Max(1, System.Environment.ProcessorCount)) : EquipmentWorkers.Value;
             new Harmony("zaohua.autocraft").PatchAll();
             // BepInEx 自带的管理物体在这个游戏里会被销毁，导致插件的 Update/OnGUI 不跑，所以自己建一个常驻物体
             var go = new GameObject("ZaohuaAutoCraft");
