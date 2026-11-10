@@ -535,6 +535,7 @@ if (Environment.GetEnvironmentVariable("SHOE") != null)
         var swC = System.Diagnostics.Stopwatch.StartNew();
         var qc = JointGeometrySolver.Solve(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 12.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, null, cov);
         Console.WriteLine($"[鞋子2·覆盖约束{string.Join(",", cov)}] {qc.Status} {swC.ElapsedMilliseconds}ms 等级[{string.Join(",", qc.Level)}] 件{qc.Items.Count}");
+        Console.WriteLine($"   模型: {JointGeometrySolver.LastStats}");
     }
     // 诊断：直接看数量解的形状/面积（7x10=70 格）
     var itemsQ = CpSatQuantity.SolveUnified(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 10.0, null, -1, MaterialPolicy.MaxRepeatCount, null, null);

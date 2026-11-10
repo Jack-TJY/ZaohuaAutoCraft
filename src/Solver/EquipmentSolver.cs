@@ -110,6 +110,21 @@ namespace ZaohuaAutoCraft.Solver
         {
             clock.Restart();
             deadline = req.TimeLimitMs;
+            // 选项B（报告 §6.4）：紧盘/多材料输入需要联合几何模型，自动放宽预算，避免质量阶段被预算卡住
+            if (req.Unified && req.Runes.Count > 0)
+            {
+                int liveMats = req.Materials.Count(m => m.Stock > 0 && m.Shape.Count > 0 && !m.Attrs.All(v => v == 0));
+                if (liveMats > 80)
+                {
+                    int typeCount = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0 && !m.Attrs.All(v => v == 0))
+                        .Select(m => Packer.GetType(m.Shape).Key).Distinct().Count();
+                    if (typeCount > 0 && typeCount <= 32)
+                    {
+                        deadline = Math.Max(deadline, 60000L);
+                        roundLog.Add($"[自动放宽] 紧盘输入(材料{liveMats} 形状类型{typeCount})，预算 {req.TimeLimitMs}ms → {deadline}ms");
+                    }
+                }
+            }
             var result = new EquipmentSolveResult();
             eval = new RuneEvaluator(req.Runes, req.Bonus);
             if (req.Runes.Count == 0)

@@ -410,11 +410,13 @@ namespace ZaohuaAutoCraft.Solver
                 }
             }
             model.Maximize(LinearExpr.Sum(obj));
+            long buildMs = sw.ElapsedMilliseconds;
             var solver = new CpSolver();
             solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{(CpSatQuantity.Deterministic ? 1 : Math.Max(1, workers))},random_seed:{randomSeed}";
             var status = solver.Solve(model);
             res.Status = status.ToString();
             res.ElapsedMs = sw.ElapsedMilliseconds;
+            LastStats = $"建模{buildMs}ms 求解{res.ElapsedMs - buildMs}ms 位置变量{allPlaces.Count} 材料变量{active.Count * 2} 层变量{runes.Count} 状态{status}";
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {
                 return res;
@@ -483,6 +485,9 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         public static string LastDebug = "";
+
+        /// <summary>最近一次求解的模型规模/构建耗时统计。</summary>
+        public static string LastStats = "";
 
         static long LayerWeight(int l)
         {
