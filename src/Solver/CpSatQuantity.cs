@@ -19,6 +19,9 @@ namespace ZaohuaAutoCraft.Solver
 
         /// <summary>CP-SAT 搜索线程数（1=确定性；>1 提速但结果可能偶有差异）。</summary>
         public static int Workers = 1;
+
+        /// <summary>严格复现模式（报告 §6）：锁定单线程 + 普通搜索参数固定；仅调试用。</summary>
+        public static bool Deterministic = false;
         /// <summary>形状切割：某侧的某个形状多重集装不下，需要至少一个形状件数减少�?/summary>
         public class ShapeCut
         {
@@ -140,7 +143,7 @@ namespace ZaohuaAutoCraft.Solver
             }
 
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{Workers},random_seed:0";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{(Deterministic ? 1 : Workers)},random_seed:0";
             var status = solver.Solve(model);
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {
@@ -358,7 +361,7 @@ namespace ZaohuaAutoCraft.Solver
                 model.Maximize(LinearExpr.Sum(objTerms));
             }
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{Workers},random_seed:0";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{(Deterministic ? 1 : Workers)},random_seed:0";
             var status = solver.Solve(model);
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {
@@ -694,7 +697,7 @@ namespace ZaohuaAutoCraft.Solver
             }
             model.Maximize(LinearExpr.Sum(obj));
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{Workers},random_seed:0";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{(Deterministic ? 1 : Workers)},random_seed:0";
             var status = solver.Solve(model);
             LastStatus = status.ToString();
             LastLog = $"状态={status} 符文={runes.Count} 材料={active.Count} 线程={Workers} 时限={timeLimitSec:0.0}s 实际={solver.WallTime():0.0}s";

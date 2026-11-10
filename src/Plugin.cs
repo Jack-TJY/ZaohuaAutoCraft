@@ -34,6 +34,8 @@ namespace ZaohuaAutoCraft
 
         internal static ConfigEntry<int> EquipmentWorkers;
 
+        internal static ConfigEntry<bool> EquipmentDeterministic;
+
         private void Awake()
         {
             Log = Logger;
@@ -51,6 +53,8 @@ namespace ZaohuaAutoCraft
             EquipmentMaterialPolicy = Config.Bind("炼器", "EquipmentMaterialPolicy", Solver.MaterialPolicy.MaxRepeatCount, "材料策略：MaxRepeatCount 最多炼制次数 / LowGradeFirst 低阶材料优先（符文质量确定后再优化）");
             EquipmentWorkers = Config.Bind("炼器", "EquipmentWorkers", 0, "炼器 CP-SAT 搜索线程数：0 = 自动（按 CPU 核数，最多 8）；1 = 单线程（结果最稳定）；越大越快但结果可能有细微差异");
             Solver.CpSatQuantity.Workers = EquipmentWorkers.Value <= 0 ? System.Math.Min(8, System.Math.Max(1, System.Environment.ProcessorCount)) : EquipmentWorkers.Value;
+            EquipmentDeterministic = Config.Bind("炼器", "EquipmentDeterministic", false, "严格复现模式（仅调试）：锁单线程+固定种子；默认关闭");
+            Solver.CpSatQuantity.Deterministic = EquipmentDeterministic.Value;
             new Harmony("zaohua.autocraft").PatchAll();
             // BepInEx 自带的管理物体在这个游戏里会被销毁，导致插件的 Update/OnGUI 不跑，所以自己建一个常驻物体
             var go = new GameObject("ZaohuaAutoCraft");

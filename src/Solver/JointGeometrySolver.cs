@@ -24,6 +24,8 @@ namespace ZaohuaAutoCraft.Solver
             public long ElapsedMs;
         }
 
+        static readonly Dictionary<string, List<Plc>> placeCache = new Dictionary<string, List<Plc>>();
+
         class Plc
         {
             public int Type;
@@ -107,26 +109,39 @@ namespace ZaohuaAutoCraft.Solver
                     var list = new List<Plc>();
                     if (grid != null)
                     {
-                        var seen = new HashSet<string>();
-                        foreach (var ori in typeOrients[ti])
+                        // 报告 §7.4：合法位置表按「规范形状 + 盘尺寸」缓存（不含 IntVar），跨求解复用
+                        string ck = kv.Key + "|" + grid.Width + "x" + grid.Height;
+                        if (placeCache.TryGetValue(ck, out var tmpl))
                         {
-                            for (int ax = 0; ax < grid.Width; ax++)
+                            foreach (var t in tmpl)
                             {
-                                for (int ay = 0; ay < grid.Height; ay++)
+                                list.Add(new Plc { Type = ti, Side = s == 0 ? Side.Yang : Side.Yin, X = t.X, Y = t.Y, Rot = t.Rot, Cells = t.Cells, AnchorX = t.AnchorX, AnchorY = t.AnchorY });
+                            }
+                        }
+                        else
+                        {
+                            var seen = new HashSet<string>();
+                            foreach (var ori in typeOrients[ti])
+                            {
+                                for (int ax = 0; ax < grid.Width; ax++)
                                 {
-                                    var cells = ori.Offsets.Select(o => new Cell(ax + o.X, ay + o.Y)).ToList();
-                                    if (!cells.All(c => c.X >= 0 && c.X < grid.Width && c.Y >= 0 && c.Y < grid.Height))
+                                    for (int ay = 0; ay < grid.Height; ay++)
                                     {
-                                        continue;
+                                        var cells = ori.Offsets.Select(o => new Cell(ax + o.X, ay + o.Y)).ToList();
+                                        if (!cells.All(c => c.X >= 0 && c.X < grid.Width && c.Y >= 0 && c.Y < grid.Height))
+                                        {
+                                            continue;
+                                        }
+                                        var key = ori.Rotate + "|" + string.Join(";", cells.Select(c => c.X + "," + c.Y).OrderBy(x => x, StringComparer.Ordinal));
+                                        if (!seen.Add(key))
+                                        {
+                                            continue;
+                                        }
+                                        list.Add(new Plc { Type = ti, Side = s == 0 ? Side.Yang : Side.Yin, X = ax, Y = ay, Rot = ori.Rotate, Cells = cells, AnchorX = ori.Anchor.X, AnchorY = ori.Anchor.Y });
                                     }
-                                    var key = ori.Rotate + "|" + string.Join(";", cells.Select(c => c.X + "," + c.Y).OrderBy(x => x, StringComparer.Ordinal));
-                                    if (!seen.Add(key))
-                                    {
-                                        continue;
-                                    }
-                                    list.Add(new Plc { Type = ti, Side = s == 0 ? Side.Yang : Side.Yin, X = ax, Y = ay, Rot = ori.Rotate, Cells = cells, AnchorX = ori.Anchor.X, AnchorY = ori.Anchor.Y });
                                 }
                             }
+                            placeCache[ck] = list.Select(p => new Plc { X = p.X, Y = p.Y, Rot = p.Rot, Cells = p.Cells, AnchorX = p.AnchorX, AnchorY = p.AnchorY }).ToList();
                         }
                     }
                     placesByKey[ti * 2 + s] = list;
@@ -371,7 +386,7 @@ namespace ZaohuaAutoCraft.Solver
             }
             model.Maximize(LinearExpr.Sum(obj));
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{Math.Max(1, workers)},random_seed:0";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{(CpSatQuantity.Deterministic ? 1 : Math.Max(1, workers))},random_seed:0";
             var status = solver.Solve(model);
             res.Status = status.ToString();
             res.ElapsedMs = sw.ElapsedMilliseconds;
