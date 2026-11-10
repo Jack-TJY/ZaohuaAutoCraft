@@ -56,7 +56,8 @@ namespace ZaohuaAutoCraft.Solver
                 }
             }
             var active = new List<int>();
-            for (int i = 0; i < materials.Count; i++)
+            // 报告 P1：按稳定 ID 排序输入，避免同分结果因枚举顺序不同而漂移
+            foreach (int i in Enumerable.Range(0, materials.Count).OrderBy(i => materials[i].Id, StringComparer.Ordinal))
             {
                 var m = materials[i];
                 if (m.Stock <= 0 || m.Shape.Count == 0 || m.Attrs.All(v => v == 0))
@@ -96,7 +97,7 @@ namespace ZaohuaAutoCraft.Solver
             // 3. 每类型每盘的合法位置（去重）
             var places = new List<List<Plc>>(); // 按 type*2+side 展开
             var placesByKey = new Dictionary<int, List<Plc>>();
-            foreach (var kv in typeIndex)
+            foreach (var kv in typeIndex.OrderBy(k => k.Key, StringComparer.Ordinal))
             {
                 int ti = kv.Value;
                 for (int s = 0; s < 2; s++)
@@ -153,7 +154,7 @@ namespace ZaohuaAutoCraft.Solver
                 }
             }
             var allPlaces = new List<Plc>();
-            foreach (var kv in placesByKey)
+            foreach (var kv in placesByKey.OrderBy(k => k.Key))
             {
                 var list = kv.Value;
                 var qList = new List<LinearExpr>();
