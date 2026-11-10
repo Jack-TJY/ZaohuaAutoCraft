@@ -598,6 +598,27 @@ if (Environment.GetEnvironmentVariable("GRIDSET") != null)
     }
 }
 
+// 4.7 染色容量 / 形状数量上界 自检
+if (Environment.GetEnvironmentVariable("COLORCAP") != null)
+{
+    Console.WriteLine("===== 染色容量/形状上界 自检 =====");
+    var sq3 = new List<Cell>();
+    for (int x = 0; x < 3; x++) { for (int y = 0; y < 3; y++) { sq3.Add(new Cell(x, y)); } }
+    var wide9 = new List<Cell>();
+    for (int x = 0; x < 5; x++) { wide9.Add(new Cell(x, 0)); }
+    for (int x = 0; x < 4; x++) { wide9.Add(new Cell(x, 1)); }
+    var bar1x3 = new List<Cell> { new Cell(0, 0), new Cell(1, 0), new Cell(2, 0) };
+    foreach (var g in new[] { (7, 10), (3, 3), (5, 5), (10, 10) })
+    {
+        var board = ColorCapacity.Build(new Grid(g.Item1, g.Item2), new List<List<Cell>> { sq3, wide9, bar1x3 });
+        Console.WriteLine($"--- {g.Item1}x{g.Item2} ---");
+        foreach (var t in board.Types)
+        {
+            Console.WriteLine($"  面积{t.Area} 合法位置{t.Placements} 数量上界{t.Upper}");
+        }
+    }
+}
+
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）
 if (Environment.GetEnvironmentVariable("CPSAT") != null)
 {

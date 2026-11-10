@@ -22,6 +22,9 @@ namespace ZaohuaAutoCraft.Solver
 
         /// <summary>严格复现模式（报告 §6）：锁定单线程 + 普通搜索参数固定；仅调试用。</summary>
         public static bool Deterministic = false;
+
+        /// <summary>是否在分解数量模型里启用「染色容量 + 形状数量上界」（依据《染色容量与形状数量上界实施报告》）。</summary>
+        public static bool UseColorCapacity = false;
         /// <summary>形状切割：某侧的某个形状多重集装不下，需要至少一个形状件数减少�?/summary>
         public class ShapeCut
         {
@@ -405,6 +408,17 @@ namespace ZaohuaAutoCraft.Solver
                     }
                 }
             }
+            // 染色容量 profile（按盘缓存，含全部材料形状类型；用于收紧单材料上界）
+            ColorCapacity.BoardProfile yangProf = null, yinProf = null;
+            if (UseColorCapacity && yang != null && yin != null)
+            {
+                var allShapes = materials.Where(m => m.Stock > 0 && m.Shape.Count > 0).Select(m => m.Shape).ToList();
+                if (allShapes.Count > 0)
+                {
+                    yangProf = ColorCapacity.Get(yang, allShapes);
+                    yinProf = ColorCapacity.Get(yin, allShapes);
+                }
+            }
             for (int i = 0; i < materials.Count; i++)
             {
                 var m = materials[i];
@@ -430,6 +444,26 @@ namespace ZaohuaAutoCraft.Solver
                 int areaOne = Math.Max(1, m.Shape.Count);
                 int yMax = yang != null && ShapeFits(yang, m.Shape) ? Math.Min(stock, yang.Area / areaOne) : 0;
                 int nMax = yin != null && ShapeFits(yin, m.Shape) ? Math.Min(stock, yin.Area / areaOne) : 0;
+                // 形状数量上界（染色容量，依据《染色容量与形状数量上界实施报告》）：真实合法位置推出更强上界
+                if (UseColorCapacity)
+                {
+                    if (yMax > 0)
+                    {
+                        var tpY = ColorCapacity.ForShape(yangProf, m.Shape);
+                        if (tpY != null)
+                        {
+                            yMax = Math.Min(yMax, tpY.Upper);
+                        }
+                    }
+                    if (nMax > 0)
+                    {
+                        var tpN = ColorCapacity.ForShape(yinProf, m.Shape);
+                        if (tpN != null)
+                        {
+                            nMax = Math.Min(nMax, tpN.Upper);
+                        }
+                    }
+                }
                 if (yMax <= 0 && nMax <= 0)
                 {
                     continue;
