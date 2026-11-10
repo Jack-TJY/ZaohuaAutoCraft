@@ -516,6 +516,7 @@ namespace ZaohuaAutoCraft
             }
             result = task.Result;
             Plugin.Log.LogInfo($"[炼器] 结果: Status={result.Status} Elapsed={result.ElapsedMs}ms 解={result.Solutions?.Count ?? 0} | CP-SAT: {CpSatQuantity.LastLog}");
+            Plugin.Log.LogInfo($"[炼器] 轮次明细: {result.RoundLog}");
             if (result.Best == null)
             {
                 status = $"{result.Message}（{result.ElapsedMs} ms）";
