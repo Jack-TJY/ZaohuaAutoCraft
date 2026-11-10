@@ -47,6 +47,11 @@ namespace ZaohuaAutoCraft
 
         EquipmentSolveResult result;
 
+        /// <summary>输入指纹 → 已验证结果缓存（报告 §5.2：相同输入复用，避免每次换同分材料）。</summary>
+        string lastFingerprint;
+
+        EquipmentSolveResult lastResult;
+
         int chosen;
 
         EquipmentSolution applied;
@@ -439,6 +444,27 @@ namespace ZaohuaAutoCraft
             GUI.DragWindow(new Rect(0, 0, 10000, 22));
         }
 
+        /// <summary>稳定输入指纹（报告 §5.1）：材料、符文、盘面、加成、目标属性、策略、优先组；按稳定 ID 排序。</summary>
+        static string Fingerprint(EquipmentRequest r)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("m:");
+            foreach (var m in r.Materials.OrderBy(x => x.Id, StringComparer.Ordinal))
+            {
+                sb.Append(m.Id).Append(':').Append(m.Stock).Append(';');
+            }
+            sb.Append("|r:");
+            foreach (var rn in r.Runes)
+            {
+                sb.Append(rn.Id).Append(':').Append(rn.MaxStacks).Append(':').Append(string.Join(",", rn.Requirement)).Append(';');
+            }
+            sb.Append("|g:").Append(r.Yang?.Width).Append('x').Append(r.Yang?.Height).Append('/').Append(r.Yin?.Width).Append('x').Append(r.Yin?.Height);
+            sb.Append("|b:").Append(string.Join(",", r.Bonus ?? new int[0]));
+            sb.Append("|t:").Append(r.TargetAttr).Append("|p:").Append(r.MaterialPolicy).Append("|u:").Append(r.Unified);
+            sb.Append("|py:").Append(string.Join(",", r.PriorityGroup ?? new int[0]));
+            return sb.ToString();
+        }
+
         void StartSolve()
         {
             try
@@ -481,6 +507,16 @@ namespace ZaohuaAutoCraft
                 };
                 result = null;
                 chosen = 0;
+                // 报告 §5.2：相同输入的已验证方案直接复用，不重新搜索
+                string fp = Fingerprint(request);
+                if (lastFingerprint == fp && lastResult != null && lastResult.Best != null)
+                {
+                    result = lastResult;
+                    status = $"{lastResult.Status}（同输入复用，{lastResult.ElapsedMs}ms）";
+                    Plugin.Log.LogInfo("[炼器] 同输入复用缓存结果");
+                    return;
+                }
+                lastFingerprint = fp;
                 status = $"计算中…约 {request.TimeLimitMs / 1000.0:0.#} 秒（符文 {runes.Count} 个，材料 {request.Materials.Count} 种）";
                 var req = request;
                 runningVersion = ++calcVersion;
@@ -517,6 +553,10 @@ namespace ZaohuaAutoCraft
             result = task.Result;
             Plugin.Log.LogInfo($"[炼器] 结果: Status={result.Status} Elapsed={result.ElapsedMs}ms 解={result.Solutions?.Count ?? 0} | CP-SAT: {CpSatQuantity.LastLog}");
             Plugin.Log.LogInfo($"[炼器] 轮次明细: {result.RoundLog}");
+            if (result.Best != null)
+            {
+                lastResult = result;
+            }
             if (result.Best == null)
             {
                 status = $"{result.Message}（{result.ElapsedMs} ms）";

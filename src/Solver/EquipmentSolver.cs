@@ -1330,7 +1330,7 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     return new List<EquipmentSolution>();
                 }
-                var cand = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers));
+                var cand = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy);
                 if (cand.Items.Count == 0)
                 {
                     roundLog.Add($"联合几何 {cand.Status} {cand.ElapsedMs}ms 无解");
@@ -1733,6 +1733,13 @@ namespace ZaohuaAutoCraft.Solver
                     foreach (var s in joint)
                     {
                         Finalize(s);
+                    }
+                    // 报告 P0：联合路径也走统一节省（与分解路径同一偏好）
+                    var jr = ReduceWaste(joint[0], EquipmentMode.MaxAttr);
+                    if (jr != null)
+                    {
+                        Finalize(jr);
+                        joint[0] = jr;
                     }
                     return joint;
                 }

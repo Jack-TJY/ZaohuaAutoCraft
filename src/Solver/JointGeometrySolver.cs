@@ -38,7 +38,7 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         public static Candidate Solve(List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin,
-            double timeLimitSec, int desiredAttr, int workers)
+            double timeLimitSec, int desiredAttr, int workers, int[] priorityGroup = null, MaterialPolicy policy = MaterialPolicy.MaxRepeatCount)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = new Candidate();
@@ -240,15 +240,57 @@ namespace ZaohuaAutoCraft.Solver
                     model.Add(LinearExpr.Sum(terms) >= -bonus[d] - 10000000L);
                 }
             }
-            // 7. 目标：逐层覆盖优先后总等级，再最少件数
+            // 7. 目标：优先组逐层覆盖 → 材料策略 → 最少件数（与分解路径同一偏好，报告 §7.5 / P0）
             var obj = new List<LinearExpr>();
+            int maxGroup = 0;
             for (int r = 0; r < runes.Count; r++)
             {
+                int g = priorityGroup != null && r < priorityGroup.Length ? Math.Max(0, priorityGroup[r]) : 0;
+                maxGroup = Math.Max(maxGroup, g);
+            }
+            for (int r = 0; r < runes.Count; r++)
+            {
+                int g = priorityGroup != null && r < priorityGroup.Length ? Math.Max(0, priorityGroup[r]) : 0;
+                long gw = 1;
+                for (int k = 0; k < maxGroup - g; k++)
+                {
+                    gw *= 10;
+                }
                 for (int l = 1; l <= runes[r].MaxStacks; l++)
                 {
-                    obj.Add(LinearExpr.Term(hasL[r][l], LayerWeight(l)));
+                    obj.Add(LinearExpr.Term(hasL[r][l], gw * LayerWeight(l)));
                 }
-                obj.Add(LinearExpr.Term(levelVar[r], 1000000L));
+                obj.Add(LinearExpr.Term(levelVar[r], gw * 1000000L));
+            }
+            if (policy == MaterialPolicy.MaxRepeatCount)
+            {
+                long maxStock = active.Count > 0 ? active.Max(i => Math.Max(1L, Math.Min(materials[i].Stock, 100000L))) : 1;
+                var bVar = model.NewIntVar(1, Math.Max(1, maxStock), "batches");
+                foreach (int i in active)
+                {
+                    long stock = Math.Min(materials[i].Stock, 10000L);
+                    var usage = model.NewIntVar(0, stock, $"u{i}");
+                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(q[i, 0], 1), LinearExpr.Term(q[i, 1], 1), LinearExpr.Term(usage, -1) }) == 0);
+                    var prod = model.NewIntVar(0, Math.Max(1, maxStock), $"p{i}");
+                    model.AddMultiplicationEquality(prod, bVar, usage);
+                    model.Add(LinearExpr.Term(prod, 1) <= stock);
+                }
+                obj.Add(LinearExpr.Term(bVar, 100000000L));
+            }
+            else
+            {
+                var grades = active.Select(i => materials[i].Grade).Distinct().OrderBy(g => g).ToList();
+                var rank = new Dictionary<int, int>();
+                for (int gi = 0; gi < grades.Count; gi++)
+                {
+                    rank[grades[gi]] = gi;
+                }
+                foreach (int i in active)
+                {
+                    long w = (rank.TryGetValue(materials[i].Grade, out var r2) ? r2 : 0) * 2000L + 1;
+                    obj.Add(LinearExpr.Term(q[i, 0], -w));
+                    obj.Add(LinearExpr.Term(q[i, 1], -w));
+                }
             }
             foreach (int i in active)
             {
