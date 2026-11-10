@@ -41,7 +41,7 @@ namespace ZaohuaAutoCraft.Solver
 
         public static Candidate Solve(List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin,
             double timeLimitSec, int desiredAttr, int workers, int[] priorityGroup = null, MaterialPolicy policy = MaterialPolicy.MaxRepeatCount,
-            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null, int randomSeed = 0)
+            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null, int randomSeed = 0, bool symmetryBreak = false)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = new Candidate();
@@ -233,6 +233,33 @@ namespace ZaohuaAutoCraft.Solver
                 foreach (var kv in byCell)
                 {
                     model.Add(LinearExpr.Sum(kv.Value) <= 1);
+                }
+                // 180° 对称破坏（报告 §7.4，通用任意矩形盘）：要求本盘前一半格子至少被占一格。
+                // 解与其 180° 旋转中至多一个满足「前一半非空」的前半条件被排除，
+                // 且该旋转是同一形状集下的合法摆法，因此不删任何本质不同的解。
+                if (symmetryBreak)
+                {
+                    int half = (grid.Width * grid.Height + 1) / 2;
+                    var terms = new List<LinearExpr>();
+                    foreach (var p in allPlaces)
+                    {
+                        if ((p.Side == Side.Yang ? 0 : 1) != s)
+                        {
+                            continue;
+                        }
+                        foreach (var c in p.Cells)
+                        {
+                            int idx = c.Y * grid.Width + c.X;
+                            if (idx < half)
+                            {
+                                terms.Add(LinearExpr.Term(p.Var, 1));
+                            }
+                        }
+                    }
+                    if (terms.Count > 0)
+                    {
+                        model.Add(LinearExpr.Sum(terms) >= 1);
+                    }
                 }
             }
             // 6. 属性 + 符文层数（逐层覆盖 + 阈值）

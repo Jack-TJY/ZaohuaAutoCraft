@@ -554,6 +554,50 @@ if (Environment.GetEnvironmentVariable("SHOE") != null)
     }
 }
 
+// 4.6 多尺寸盘 对称破坏对比（离线测试集）
+if (Environment.GetEnvironmentVariable("GRIDSET") != null)
+{
+    Console.WriteLine("===== 多尺寸盘·对称破坏对比（鞋子2符文 + 真实库存）=====");
+    var invPath2 = Path.Combine(dir, "inventory.json");
+    var inv2 = JsonDocument.Parse(File.ReadAllText(invPath2)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+    var gsMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, inv2.TryGetValue(m.Id, out var c2) ? c2 : 0)).ToList();
+    var gsRunes = new List<Rune>
+    {
+        new Rune { Id = "g1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
+        new Rune { Id = "g2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
+        new Rune { Id = "g3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
+        new Rune { Id = "g4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
+        new Rune { Id = "g5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
+    };
+    string CovKey(int[] lv)
+    {
+        long kk = 0;
+        int maxL2 = gsRunes.Max(r => r.MaxStacks);
+        for (int l = 1; l <= maxL2; l++)
+        {
+            int h = 0;
+            foreach (var v in lv) { if (v >= l) { h++; } }
+            kk = kk * 100 + h;
+        }
+        return kk.ToString();
+    }
+    var sizes = new[] { (3, 3), (4, 4), (5, 5), (5, 8), (7, 7), (7, 10), (9, 10), (10, 10) };
+    foreach (var sz in sizes)
+    {
+        foreach (var sym in new[] { false, true })
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var cc = JointGeometrySolver.Solve(gsMats, gsRunes, new int[Attr.Count], new Grid(sz.Item1, sz.Item2), new Grid(sz.Item1, sz.Item2), 20.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, null, null, 0, sym);
+            var gsol = new EquipmentSolution();
+            foreach (var it in cc.Items) { gsol.Placements.Add(new Placement { Material = it.mat, Side = it.side, X = it.x, Y = it.y, Rotate = it.rot }); }
+            var greq = new EquipmentRequest { Materials = gsMats, Runes = gsRunes, Yang = new Grid(sz.Item1, sz.Item2), Yin = new Grid(sz.Item1, sz.Item2), Unified = true, TargetAttr = -1 };
+            if (cc.Items.Count > 0) { gsol.Runes = new RuneEvaluator(gsRunes, new int[Attr.Count]).Evaluate(gsol.Placements); }
+            var verr = cc.Items.Count > 0 ? (EquipmentSolver.Verify(greq, gsol) ?? "OK") : "-";
+            Console.WriteLine($"[{sz.Item1}x{sz.Item2} 对称破坏={(sym ? "开" : "关")}] {cc.Status} {cc.ElapsedMs}ms {cc.Items.Count}件 等级[{string.Join(",", cc.Level)}] 覆盖键{CovKey(cc.Level)} 复核{verr}");
+        }
+    }
+}
+
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）
 if (Environment.GetEnvironmentVariable("CPSAT") != null)
 {
