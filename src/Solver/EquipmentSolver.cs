@@ -1569,6 +1569,25 @@ namespace ZaohuaAutoCraft.Solver
                 for (int i = 0; i < placements.Count; i++)
                 {
                     var p = placements[i];
+                    // 删除冗余单件（报告 §9.4）：不降低统一评分、且不破坏指定属性才删
+                    if (placements.Count > 1)
+                    {
+                        var del = placements.ToList();
+                        del.RemoveAt(i);
+                        bool attrOk = req.TargetAttr < 0 || RuneEvaluator.ItemAttrOf(eval.SumAttrs(del)) == req.TargetAttr;
+                        if (attrOk)
+                        {
+                            var dc = new EquipmentSolution { Placements = del };
+                            Finalize(dc);
+                            if (CompareRank(RankKey(dc, mode), baseKey) <= 0)
+                            {
+                                placements = del;
+                                baseKey = RankKey(dc, mode);
+                                changed = true;
+                                break;
+                            }
+                        }
+                    }
                     foreach (var m in req.Materials)
                     {
                         if (clock.ElapsedMilliseconds > deadline)
