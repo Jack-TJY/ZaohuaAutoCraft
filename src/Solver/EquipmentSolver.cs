@@ -1340,7 +1340,7 @@ namespace ZaohuaAutoCraft.Solver
                     long remain2 = deadline - clock.ElapsedMilliseconds;
                     if (remain2 > 300)
                     {
-                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, q1.Level);
+                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, q1.Level, q1);
                         roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}]");
                         if (q2.Items.Count > 0)
                         {

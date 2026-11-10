@@ -39,7 +39,7 @@ namespace ZaohuaAutoCraft.Solver
 
         public static Candidate Solve(List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin,
             double timeLimitSec, int desiredAttr, int workers, int[] priorityGroup = null, MaterialPolicy policy = MaterialPolicy.MaxRepeatCount,
-            int[] fixedLevel = null, bool qualityOnly = false)
+            int[] fixedLevel = null, Candidate hint = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = new Candidate();
@@ -140,6 +140,20 @@ namespace ZaohuaAutoCraft.Solver
                 q[i, 0] = model.NewIntVar(0, stock, $"qy{i}");
                 q[i, 1] = model.NewIntVar(0, stock, $"qn{i}");
                 model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(q[i, 0], 1), LinearExpr.Term(q[i, 1], 1) }) <= stock);
+                // 报告 §7.2：用已有合法方案做热启动提示（不是强制约束）
+                if (hint != null && hint.Items.Count > 0)
+                {
+                    int hy = 0, hn = 0;
+                    foreach (var it in hint.Items)
+                    {
+                        if (ReferenceEquals(it.mat, materials[i]))
+                        {
+                            if (it.side == Side.Yang) { hy++; } else { hn++; }
+                        }
+                    }
+                    model.AddHint(q[i, 0], Math.Min(hy, stock));
+                    model.AddHint(q[i, 1], Math.Min(hn, stock));
+                }
             }
             var byTypeSide = new Dictionary<int, List<int>>(); // type*2+side -> active material indices
             foreach (int i in active)
@@ -213,6 +227,10 @@ namespace ZaohuaAutoCraft.Solver
             {
                 var rune = runes[r];
                 levelVar[r] = model.NewIntVar(0, rune.MaxStacks, $"lv{r}");
+                if (hint != null && hint.Level.Length > r)
+                {
+                    model.AddHint(levelVar[r], hint.Level[r]);
+                }
                 hasL[r] = new IntVar[rune.MaxStacks + 1];
                 for (int l = 1; l <= rune.MaxStacks; l++)
                 {
