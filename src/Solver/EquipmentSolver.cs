@@ -1384,6 +1384,7 @@ namespace ZaohuaAutoCraft.Solver
                 roundLog.Add($"联合几何·满级检查 {qFull.Status} {qFull.ElapsedMs}ms 件{qFull.Items.Count}");
                 JointGeometrySolver.Candidate cand;
                 int[] targetLevel;
+                int[] coverage = null;
                 if (qFull.Items.Count > 0)
                 {
                     cand = qFull;
@@ -1391,14 +1392,56 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 else
                 {
-                    // 单次质量优化：大切片更容易搜到高覆盖。
-                    // 注：覆盖前沿（逐层可行性搜索）每次检查需 8~12 秒，30 秒预算内跑不完全部层，
-                    // 实测会因检查超时误判而退化，故保留单次大切片为默认。
-                    long qBudget = (deadline - clock.ElapsedMilliseconds) * 65 / 100;
-                    var q1 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.3, qBudget / 1000.0), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
-                    roundLog.Add($"联合几何·质量 {q1.Status} {q1.ElapsedMs}ms 等级[{string.Join(",", q1.Level)}] 覆盖键{CoverageKey(q1.Level)}");
-                    cand = q1;
-                    targetLevel = q1 != null ? q1.Level : null;
+                    // 质量前沿（报告 §7.1）：逐层求最大覆盖。已实测「给定覆盖目标」5.7s 就 Optimal，
+                    // 而无目标优化要 37s 还证不出最优，所以这里改成「逐层二分 + 覆盖硬约束」。
+                    int maxL = req.Runes.Count > 0 ? req.Runes.Max(r => r.MaxStacks) : 0;
+                    var cov = new int[maxL];
+                    JointGeometrySolver.Candidate q1 = null;
+                    long checks = 0;
+                    long frontierStop = clock.ElapsedMilliseconds + (deadline - clock.ElapsedMilliseconds) * 75 / 100;
+                    for (int l = 1; l <= maxL; l++)
+                    {
+                        int hi = req.Runes.Count(r => r.MaxStacks >= l);
+                        int lo = 0;
+                        while (lo < hi)
+                        {
+                            int mid = (lo + hi + 1) / 2;
+                            cov[l - 1] = mid;
+                            long rem = frontierStop - clock.ElapsedMilliseconds;
+                            if (rem < 800)
+                            {
+                                break;
+                            }
+                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(12.0, rem / 1000.0 * 0.95)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, q1, cov);
+                            checks++;
+                            if (c.Items.Count > 0)
+                            {
+                                lo = mid;
+                                q1 = c;
+                            }
+                            else
+                            {
+                                hi = mid - 1;
+                            }
+                        }
+                        cov[l - 1] = lo;
+                    }
+                    roundLog.Add($"联合几何·覆盖前沿 覆盖[{string.Join(",", cov)}] 检查{checks}次 解{q1?.Items.Count ?? 0}");
+                    if (q1 != null && q1.Items.Count > 0)
+                    {
+                        cand = q1;
+                        coverage = cov;
+                        targetLevel = null;
+                    }
+                    else
+                    {
+                        // 兜底：前沿未拿到解时退回单次质量优化
+                        long qBudget = (deadline - clock.ElapsedMilliseconds) * 65 / 100;
+                        var qb = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.3, qBudget / 1000.0), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
+                        roundLog.Add($"联合几何·质量 {qb.Status} {qb.ElapsedMs}ms 等级[{string.Join(",", qb.Level)}] 覆盖键{CoverageKey(qb.Level)}");
+                        cand = qb;
+                        targetLevel = qb != null ? qb.Level : null;
+                    }
                 }
                 // 阶段2：固定质量/覆盖，优化材料策略（用上阶段方案做热启动提示）
                 if (cand != null && cand.Items.Count > 0)
@@ -1406,7 +1449,7 @@ namespace ZaohuaAutoCraft.Solver
                     long remain2 = deadline - clock.ElapsedMilliseconds;
                     if (remain2 > 300)
                     {
-                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, targetLevel, cand);
+                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, coverage == null ? targetLevel : null, cand, coverage);
                         roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}]");
                         if (q2.Items.Count > 0)
                         {
