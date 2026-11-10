@@ -41,7 +41,7 @@ namespace ZaohuaAutoCraft.Solver
 
         public static Candidate Solve(List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin,
             double timeLimitSec, int desiredAttr, int workers, int[] priorityGroup = null, MaterialPolicy policy = MaterialPolicy.MaxRepeatCount,
-            int[] fixedLevel = null, Candidate hint = null)
+            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = new Candidate();
@@ -278,6 +278,31 @@ namespace ZaohuaAutoCraft.Solver
                     terms.Add(LinearExpr.Term(levelVar[r], -req));
                     terms.Add(LinearExpr.Term(hasL[r][1], -10000000L));
                     model.Add(LinearExpr.Sum(terms) >= -bonus[d] - 10000000L);
+                }
+            }
+            // 覆盖目标（质量前沿，报告 §7.1）：每层至少 coverageMin[l-1] 个符文达到
+            if (coverageMin != null)
+            {
+                int maxL = runes.Count > 0 ? runes.Max(r => r.MaxStacks) : 0;
+                for (int l = 1; l <= maxL; l++)
+                {
+                    int need = l - 1 < coverageMin.Length ? coverageMin[l - 1] : 0;
+                    if (need <= 0)
+                    {
+                        continue;
+                    }
+                    var ct = new List<LinearExpr>();
+                    for (int r = 0; r < runes.Count; r++)
+                    {
+                        if (l <= runes[r].MaxStacks)
+                        {
+                            ct.Add(LinearExpr.Term(hasL[r][l], 1));
+                        }
+                    }
+                    if (ct.Count > 0)
+                    {
+                        model.Add(LinearExpr.Sum(ct) >= need);
+                    }
                 }
             }
             // 7. 阶段目标（报告 §7.1）：质量阶段只优化优先组/逐层覆盖/等级；材料阶段在质量固定后优化策略/件数

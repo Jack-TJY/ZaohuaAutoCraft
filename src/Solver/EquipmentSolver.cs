@@ -1348,14 +1348,14 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 else
                 {
-                    // 阶段1：质量优化（满级不可行时）
+                    // 满级不可行 → 质量优化（保留合法基线作为后续材料阶段提示）
                     var q1 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.3, (deadline - clock.ElapsedMilliseconds) / 1000.0 * 0.65), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
                     roundLog.Add($"联合几何·质量 {q1.Status} {q1.ElapsedMs}ms 等级[{string.Join(",", q1.Level)}]");
                     cand = q1;
                     targetLevel = q1.Level;
                 }
-                // 阶段2：固定质量，优化材料策略（用上阶段方案做热启动提示）
-                if (cand.Items.Count > 0)
+                // 阶段2：固定质量/覆盖，优化材料策略（用上阶段方案做热启动提示）
+                if (cand != null && cand.Items.Count > 0)
                 {
                     long remain2 = deadline - clock.ElapsedMilliseconds;
                     if (remain2 > 300)
@@ -1368,9 +1368,9 @@ namespace ZaohuaAutoCraft.Solver
                         }
                     }
                 }
-                if (cand.Items.Count == 0)
+                if (cand == null || cand.Items.Count == 0)
                 {
-                    roundLog.Add($"联合几何 {cand.Status} {cand.ElapsedMs}ms 无解");
+                    roundLog.Add("联合几何 无解");
                     return new List<EquipmentSolution>();
                 }
                 var sol = new EquipmentSolution();
