@@ -1330,7 +1330,24 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     return new List<EquipmentSolution>();
                 }
-                var cand = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy);
+                // 阶段1：质量（报告 §7.1 目标与阶段解耦）
+                var q1 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain / 1000.0 * 0.65, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
+                roundLog.Add($"联合几何·质量 {q1.Status} {q1.ElapsedMs}ms 等级[{string.Join(",", q1.Level)}]");
+                JointGeometrySolver.Candidate cand = q1;
+                // 阶段2：固定质量，优化材料策略
+                if (q1.Items.Count > 0)
+                {
+                    long remain2 = deadline - clock.ElapsedMilliseconds;
+                    if (remain2 > 300)
+                    {
+                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, q1.Level);
+                        roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}]");
+                        if (q2.Items.Count > 0)
+                        {
+                            cand = q2;
+                        }
+                    }
+                }
                 if (cand.Items.Count == 0)
                 {
                     roundLog.Add($"联合几何 {cand.Status} {cand.ElapsedMs}ms 无解");
