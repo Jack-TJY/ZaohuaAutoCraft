@@ -1320,6 +1320,34 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         /// <summary>统一流程：CP-SAT 求解（优先级组+可选属性+材料策略），装不下时加形状切割重求。</summary>
+        /// <summary>质量覆盖键（报告 §5.3）：逐层「达到该层的符文数」按字典序编码，越大越好。</summary>
+        long CoverageKey(int[] level)
+        {
+            if (level == null || level.Length == 0)
+            {
+                return long.MinValue;
+            }
+            long key = 0;
+            int maxL = 0;
+            foreach (var r in req.Runes)
+            {
+                maxL = Math.Max(maxL, r.MaxStacks);
+            }
+            for (int l = 1; l <= maxL; l++)
+            {
+                int h = 0;
+                foreach (var lv in level)
+                {
+                    if (lv >= l)
+                    {
+                        h++;
+                    }
+                }
+                key = key * 100 + h;
+            }
+            return key;
+        }
+
         /// <summary>按形状类型联合建模（报告 §6）：几何与数量在同一模型，用于分解路径反复装不下时。</summary>
         List<EquipmentSolution> SolveJointUnified()
         {
@@ -1348,11 +1376,29 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 else
                 {
-                    // 满级不可行 → 质量优化（保留合法基线作为后续材料阶段提示）
-                    var q1 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.3, (deadline - clock.ElapsedMilliseconds) / 1000.0 * 0.65), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
-                    roundLog.Add($"联合几何·质量 {q1.Status} {q1.ElapsedMs}ms 等级[{string.Join(",", q1.Level)}]");
+                    // 满级不可行 → 质量优化。跑 2 次短切片按覆盖向量取更好，降低多线程随机性导致的质量波动；
+                    // 选中的合法方案同时作为材料阶段热启动提示。
+                    JointGeometrySolver.Candidate q1 = null;
+                    long bestKey = long.MinValue;
+                    for (int k = 0; k < 2; k++)
+                    {
+                        long rem = deadline - clock.ElapsedMilliseconds;
+                        if (rem < 300)
+                        {
+                            break;
+                        }
+                        long budgetMs = k == 0 ? rem * 55 / 100 : rem * 95 / 100;
+                        var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.3, budgetMs / 1000.0), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
+                        long key = CoverageKey(c.Level);
+                        roundLog.Add($"联合几何·质量{k + 1} {c.Status} {c.ElapsedMs}ms 等级[{string.Join(",", c.Level)}] 覆盖键{key}");
+                        if (q1 == null || key > bestKey)
+                        {
+                            q1 = c;
+                            bestKey = key;
+                        }
+                    }
                     cand = q1;
-                    targetLevel = q1.Level;
+                    targetLevel = q1 != null ? q1.Level : null;
                 }
                 // 阶段2：固定质量/覆盖，优化材料策略（用上阶段方案做热启动提示）
                 if (cand != null && cand.Items.Count > 0)
