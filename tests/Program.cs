@@ -521,6 +521,21 @@ if (Environment.GetEnvironmentVariable("SHOE") != null)
         Console.WriteLine($"   联合模型复核: {EquipmentSolver.Verify(jreq, sol) ?? "OK"}");
         Console.WriteLine($"   联合模型等级: [{string.Join(",", sol.Runes.Level)}] 属性: [{string.Join(",", jev.SumAttrs(sol.Placements))}]");
     }
+    // 无时限：质量阶段跑到 Optimal 要多久
+    var swQ = System.Diagnostics.Stopwatch.StartNew();
+    var qUnlim = JointGeometrySolver.Solve(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 300.0, -1, 8, null, MaterialPolicy.MaxRepeatCount);
+    Console.WriteLine($"[鞋子2·质量无时限] {qUnlim.Status} {swQ.ElapsedMilliseconds}ms 等级[{string.Join(",", qUnlim.Level)}] 件{qUnlim.Items.Count}");
+    // 无时限：材料阶段（固定质量）
+    var swM = System.Diagnostics.Stopwatch.StartNew();
+    var qMat = JointGeometrySolver.Solve(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 300.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, qUnlim.Level, qUnlim);
+    Console.WriteLine($"[鞋子2·材料无时限] {qMat.Status} {swM.ElapsedMilliseconds}ms 等级[{string.Join(",", qMat.Level)}] 件{qMat.Items.Count}");
+    // 覆盖约束诊断：验证 coverageMin 是否生效
+    foreach (var cov in new[] { new[] { 5, 3, 0 }, new[] { 5, 3, 1 }, new[] { 5, 2, 0 } })
+    {
+        var swC = System.Diagnostics.Stopwatch.StartNew();
+        var qc = JointGeometrySolver.Solve(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 12.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, null, cov);
+        Console.WriteLine($"[鞋子2·覆盖约束{string.Join(",", cov)}] {qc.Status} {swC.ElapsedMilliseconds}ms 等级[{string.Join(",", qc.Level)}] 件{qc.Items.Count}");
+    }
     // 诊断：直接看数量解的形状/面积（7x10=70 格）
     var itemsQ = CpSatQuantity.SolveUnified(invMats, shoeRunes, new int[Attr.Count], new Grid(7, 10), new Grid(7, 10), 10.0, null, -1, MaterialPolicy.MaxRepeatCount, null, null);
     Console.WriteLine($"[鞋子2·数量诊断] {CpSatQuantity.LastLog}");
