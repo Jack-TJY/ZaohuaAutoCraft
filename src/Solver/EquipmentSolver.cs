@@ -1378,25 +1378,10 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     // 满级不可行 → 质量优化。跑 2 次短切片按覆盖向量取更好，降低多线程随机性导致的质量波动；
                     // 选中的合法方案同时作为材料阶段热启动提示。
-                    JointGeometrySolver.Candidate q1 = null;
-                    long bestKey = long.MinValue;
-                    for (int k = 0; k < 2; k++)
-                    {
-                        long rem = deadline - clock.ElapsedMilliseconds;
-                        if (rem < 300)
-                        {
-                            break;
-                        }
-                        long budgetMs = k == 0 ? rem * 55 / 100 : rem * 95 / 100;
-                        var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.3, budgetMs / 1000.0), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
-                        long key = CoverageKey(c.Level);
-                        roundLog.Add($"联合几何·质量{k + 1} {c.Status} {c.ElapsedMs}ms 等级[{string.Join(",", c.Level)}] 覆盖键{key}");
-                        if (q1 == null || key > bestKey)
-                        {
-                            q1 = c;
-                            bestKey = key;
-                        }
-                    }
+                    // 单次质量优化：多线程大切片更容易搜到高覆盖（切太碎反而搜不到等级9）
+                    long qBudget = (deadline - clock.ElapsedMilliseconds) * 65 / 100;
+                    var q1 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.3, qBudget / 1000.0), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
+                    roundLog.Add($"联合几何·质量 {q1.Status} {q1.ElapsedMs}ms 等级[{string.Join(",", q1.Level)}] 覆盖键{CoverageKey(q1.Level)}");
                     cand = q1;
                     targetLevel = q1 != null ? q1.Level : null;
                 }

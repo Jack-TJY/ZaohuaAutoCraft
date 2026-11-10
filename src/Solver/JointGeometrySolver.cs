@@ -41,7 +41,7 @@ namespace ZaohuaAutoCraft.Solver
 
         public static Candidate Solve(List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin,
             double timeLimitSec, int desiredAttr, int workers, int[] priorityGroup = null, MaterialPolicy policy = MaterialPolicy.MaxRepeatCount,
-            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null)
+            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null, int randomSeed = 0)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = new Candidate();
@@ -411,7 +411,7 @@ namespace ZaohuaAutoCraft.Solver
             }
             model.Maximize(LinearExpr.Sum(obj));
             var solver = new CpSolver();
-            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{(CpSatQuantity.Deterministic ? 1 : Math.Max(1, workers))},random_seed:0";
+            solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{(CpSatQuantity.Deterministic ? 1 : Math.Max(1, workers))},random_seed:{randomSeed}";
             var status = solver.Solve(model);
             res.Status = status.ToString();
             res.ElapsedMs = sw.ElapsedMilliseconds;
