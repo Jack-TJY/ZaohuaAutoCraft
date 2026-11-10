@@ -1330,17 +1330,37 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     return new List<EquipmentSolution>();
                 }
-                // 阶段1：质量（报告 §7.1 目标与阶段解耦）
-                var q1 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain / 1000.0 * 0.65, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
-                roundLog.Add($"联合几何·质量 {q1.Status} {q1.ElapsedMs}ms 等级[{string.Join(",", q1.Level)}]");
-                JointGeometrySolver.Candidate cand = q1;
-                // 阶段2：固定质量，优化材料策略
-                if (q1.Items.Count > 0)
+                // 质量前沿第一步（报告 §7.1）：先试「满级可行性」。满级可行则质量已是上限，直接进材料阶段；
+                // 满级不可行才做质量优化，并用其合法方案作为材料阶段提示。
+                var fullTarget = new int[req.Runes.Count];
+                for (int i = 0; i < fullTarget.Length; i++)
+                {
+                    fullTarget[i] = req.Runes[i].MaxStacks;
+                }
+                var qFull = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Min(1.5, remain / 1000.0 * 0.15), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, fullTarget);
+                roundLog.Add($"联合几何·满级检查 {qFull.Status} {qFull.ElapsedMs}ms 件{qFull.Items.Count}");
+                JointGeometrySolver.Candidate cand;
+                int[] targetLevel;
+                if (qFull.Items.Count > 0)
+                {
+                    cand = qFull;
+                    targetLevel = fullTarget;
+                }
+                else
+                {
+                    // 阶段1：质量优化（满级不可行时）
+                    var q1 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.3, (deadline - clock.ElapsedMilliseconds) / 1000.0 * 0.65), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null);
+                    roundLog.Add($"联合几何·质量 {q1.Status} {q1.ElapsedMs}ms 等级[{string.Join(",", q1.Level)}]");
+                    cand = q1;
+                    targetLevel = q1.Level;
+                }
+                // 阶段2：固定质量，优化材料策略（用上阶段方案做热启动提示）
+                if (cand.Items.Count > 0)
                 {
                     long remain2 = deadline - clock.ElapsedMilliseconds;
                     if (remain2 > 300)
                     {
-                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, q1.Level, q1);
+                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, targetLevel, cand);
                         roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}]");
                         if (q2.Items.Count > 0)
                         {
