@@ -1363,6 +1363,55 @@ namespace ZaohuaAutoCraft.Solver
             return key;
         }
 
+        /// <summary>候选方案的可炼次数（min 库存/单次用量；同一种摆法重复炼制）。</summary>
+        long MaterialBatches(JointGeometrySolver.Candidate c)
+        {
+            if (c == null || c.Items.Count == 0)
+            {
+                return 0;
+            }
+            var use = new Dictionary<Material, int>();
+            foreach (var it in c.Items)
+            {
+                use.TryGetValue(it.mat, out var v);
+                use[it.mat] = v + 1;
+            }
+            long b = long.MaxValue;
+            foreach (var kv in use)
+            {
+                if (kv.Key.Stock <= 0)
+                {
+                    return 0;
+                }
+                b = Math.Min(b, kv.Key.Stock / kv.Value);
+            }
+            return b == long.MaxValue ? 0 : b;
+        }
+
+        /// <summary>完整目标比较（报告 §5.3）：质量覆盖优先，其次材料策略。</summary>
+        bool CandidateBetter(JointGeometrySolver.Candidate a, JointGeometrySolver.Candidate b)
+        {
+            if (a == null || a.Items.Count == 0)
+            {
+                return false;
+            }
+            if (b == null || b.Items.Count == 0)
+            {
+                return true;
+            }
+            long ka = CoverageKey(a.Level), kb = CoverageKey(b.Level);
+            if (ka != kb)
+            {
+                return ka > kb;
+            }
+            if (req.MaterialPolicy == MaterialPolicy.MaxRepeatCount)
+            {
+                return MaterialBatches(a) > MaterialBatches(b);
+            }
+            long ga = a.Items.Sum(it => (long)it.mat.Grade), gb = b.Items.Sum(it => (long)it.mat.Grade);
+            return ga < gb;
+        }
+
         /// <summary>按形状类型联合建模（报告 §6）：几何与数量在同一模型，用于分解路径反复装不下时。</summary>
         List<EquipmentSolution> SolveJointUnified()
         {
@@ -1443,15 +1492,18 @@ namespace ZaohuaAutoCraft.Solver
                         targetLevel = qb != null ? qb.Level : null;
                     }
                 }
-                // 阶段2：固定质量/覆盖，优化材料策略（用上阶段方案做热启动提示）
+                // 阶段2：质量锁定后真正优化材料（报告 §5.2/§5.4：用 materialGoal 显式进入材料分支）
                 if (cand != null && cand.Items.Count > 0)
                 {
                     long remain2 = deadline - clock.ElapsedMilliseconds;
                     if (remain2 > 300)
                     {
-                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, coverage == null ? targetLevel : null, cand, coverage);
-                        roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}]");
-                        if (q2.Items.Count > 0)
+                        // 质量锁定用候选自身等级（而非覆盖目标的下界），保证材料阶段不降低质量
+                        int[] qualityLevel = cand.Level;
+                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, qualityLevel, cand, coverage, 0, false, true);
+                        roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}] 批次{MaterialBatches(q2)} 覆盖键{CoverageKey(q2.Level)}");
+                        // 报告 §5.3：不无条件覆盖，只有完整目标（质量优先，其次材料）严格改善才替换
+                        if (q2.Items.Count > 0 && CandidateBetter(q2, cand))
                         {
                             cand = q2;
                         }
