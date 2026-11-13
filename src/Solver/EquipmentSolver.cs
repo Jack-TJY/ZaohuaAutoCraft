@@ -1465,7 +1465,7 @@ namespace ZaohuaAutoCraft.Solver
                                 break;
                             }
                             // 可行性判定只需首个满足门槛的解，越早返回越好；10 秒足以覆盖不可行的证明尝试
-                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(10.0, rem / 1000.0 * 0.98)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, q1, cov, 0, false, false, true);
+                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(14.0, rem / 1000.0 * 0.98)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, q1, cov, 0, false, false, true);
                             checks++;
                             if (c.Items.Count > 0)
                             {
