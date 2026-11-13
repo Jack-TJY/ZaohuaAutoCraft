@@ -1364,6 +1364,41 @@ namespace ZaohuaAutoCraft.Solver
             return key;
         }
 
+        /// <summary>候选等级向量在第 l 层（层数 ≥ l）的符文数。</summary>
+        static int CoverageAt(int[] level, int l)
+        {
+            if (level == null)
+            {
+                return 0;
+            }
+            int n = 0;
+            foreach (var v in level)
+            {
+                if (v >= l)
+                {
+                    n++;
+                }
+            }
+            return n;
+        }
+
+        /// <summary>候选是否同时满足给定覆盖下限向量（报告 §5.5：已有候选满足门槛即视为可行见证）。</summary>
+        static bool Satisfies(int[] level, int[] cov)
+        {
+            if (level == null || cov == null)
+            {
+                return false;
+            }
+            for (int l = 1; l <= cov.Length; l++)
+            {
+                if (CoverageAt(level, l) < cov[l - 1])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         /// <summary>候选方案的可炼次数（min 库存/单次用量；同一种摆法重复炼制）。</summary>
         long MaterialBatches(JointGeometrySolver.Candidate c)
         {
@@ -1454,6 +1489,15 @@ namespace ZaohuaAutoCraft.Solver
                     {
                         int hi = req.Runes.Count(r => r.MaxStacks >= l);
                         int lo = 0;
+                        // 报告建议：已持有候选若能满足本层更高覆盖，直接把它作为下界，不必再求解该门槛
+                        if (q1 != null)
+                        {
+                            int have = CoverageAt(q1.Level, l);
+                            if (have > lo)
+                            {
+                                lo = Math.Min(hi, have);
+                            }
+                        }
                         while (lo < hi)
                         {
                             int mid = (lo + hi + 1) / 2;
@@ -1464,8 +1508,11 @@ namespace ZaohuaAutoCraft.Solver
                                 frontierUnproven = true;
                                 break;
                             }
-                            // 可行性判定只需首个满足门槛的解，越早返回越好；10 秒足以覆盖不可行的证明尝试
-                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(14.0, rem / 1000.0 * 0.98)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, q1, cov, 0, false, false, true);
+                            // 实测：即使等级提示与新增覆盖门槛不一致，材料数量维度的 warm start 仍有价值
+                            // （去掉提示后 [5,3,1] 门槛的命中率明显下降），因此始终沿用上一步的候选作为提示。
+                            var gateHint = q1;
+                            // 可行性判定只需首个满足门槛的解，越早返回越好
+                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(14.0, rem / 1000.0 * 0.98)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, gateHint, cov, 0, false, false, true);
                             checks++;
                             if (c.Items.Count > 0)
                             {
