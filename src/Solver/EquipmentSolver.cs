@@ -1511,9 +1511,33 @@ namespace ZaohuaAutoCraft.Solver
                             // 实测：即使等级提示与新增覆盖门槛不一致，材料数量维度的 warm start 仍有价值
                             // （去掉提示后 [5,3,1] 门槛的命中率明显下降），因此始终沿用上一步的候选作为提示。
                             var gateHint = q1;
-                            // 可行性判定只需首个满足门槛的解，越早返回越好
-                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(14.0, rem / 1000.0 * 0.98)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, gateHint, cov, 0, false, false, true);
-                            checks++;
+                            // 报告 §5：单次长跑经常 Unknown，换种子重试命中率高得多。
+                            // 实测同一 14 秒预算：单种子跑满 14s 全部 Unknown；切成 4 个 3.5s 的种子，
+                            // 第 2 次（seed1）1.05s 就命中 [1,1,2,2,3]。找到解或已证不可行即停。
+                            JointGeometrySolver.Candidate c = null;
+                            long gateBudget = Math.Max(600L, Math.Min(14000L, rem));
+                            long gateStart = clock.ElapsedMilliseconds;
+                            bool gateTried = false;
+                            for (int sd = 0; sd < 4; sd++)
+                            {
+                                long slice = gateBudget - (clock.ElapsedMilliseconds - gateStart);
+                                if (slice < 600L)
+                                {
+                                    break;
+                                }
+                                c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.6, slice / 1000.0), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, gateHint, cov, sd, false, false, true);
+                                checks++;
+                                gateTried = true;
+                                if (c.Items.Count > 0 || c.Status == "Infeasible")
+                                {
+                                    break;
+                                }
+                            }
+                            if (!gateTried)
+                            {
+                                frontierUnproven = true;
+                                break;
+                            }
                             if (c.Items.Count > 0)
                             {
                                 lo = mid;

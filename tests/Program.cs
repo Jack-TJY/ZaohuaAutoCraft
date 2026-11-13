@@ -554,6 +554,71 @@ if (Environment.GetEnvironmentVariable("SHOE") != null)
     }
 }
 
+// 4.55 种子重试对照测试（报告 §5：Unknown 换种子重试是否有收益）
+if (Environment.GetEnvironmentVariable("SEEDTEST") != null)
+{
+    Console.WriteLine("===== 种子重试对照测试 =====");
+    CpSatQuantity.Workers = 8;
+    var stInvPath = Path.Combine(dir, "inventory.json");
+    var stInv = JsonDocument.Parse(File.ReadAllText(stInvPath)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+    var stMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, stInv.TryGetValue(m.Id, out var c) ? c : 0)).ToList();
+    var stRunes = new List<Rune>
+    {
+        new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
+        new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
+        new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
+        new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
+        new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
+    };
+    var stYang = new Grid(7, 10);
+    var stYin = new Grid(7, 10);
+    int[] stBonus = new int[Attr.Count];
+    // 前置：解 [5,3,0] 门槛，作为后续门槛的热启动提示（全流程里就是这样传的）
+    var swP = System.Diagnostics.Stopwatch.StartNew();
+    var prev = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, 14.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, null, new[] { 5, 3, 0 }, 0, false, false, true);
+    Console.WriteLine($"前置[5,3,0]: {prev.Status} {swP.ElapsedMilliseconds}ms 件{prev.Items.Count} 等级[{string.Join(",", prev.Level)}]");
+    int[,] gates = { { 5, 3, 1 }, { 5, 3, 2 } };
+    for (int gi = 0; gi < gates.GetLength(0); gi++)
+    {
+        var gate = new[] { gates[gi, 0], gates[gi, 1], gates[gi, 2] };
+        Console.WriteLine($"--- 门槛 覆盖[{string.Join(",", gate)}] ---");
+        // A: 无提示，单种子 14s
+        var swA = System.Diagnostics.Stopwatch.StartNew();
+        var cA = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, 14.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, null, gate, 0, false, false, true);
+        Console.WriteLine($"  A 无提示单种子14s : {cA.Status} {swA.ElapsedMilliseconds}ms 件{cA.Items.Count}");
+        // B: 带提示，单种子 14s（当前实现）
+        var swB = System.Diagnostics.Stopwatch.StartNew();
+        var cB = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, 14.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, prev, gate, 0, false, false, true);
+        Console.WriteLine($"  B 带提示单种子14s : {cB.Status} {swB.ElapsedMilliseconds}ms 件{cB.Items.Count} 等级[{string.Join(",", cB.Level)}]");
+        // C: 带提示，多种子 × 3.5s（总预算≈14s）
+        var swC = System.Diagnostics.Stopwatch.StartNew();
+        int hits = 0, tried = 0;
+        string firstHit = "-";
+        for (int sd = 0; sd < 4; sd++)
+        {
+            var one = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, 3.5, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, prev, gate, sd, false, false, true);
+            tried++;
+            if (one.Items.Count > 0)
+            {
+                hits++;
+                if (firstHit == "-") { firstHit = $"seed{sd}@{one.ElapsedMs}ms 等级[{string.Join(",", one.Level)}]"; }
+                break;
+            }
+        }
+        Console.WriteLine($"  C 带提示3.5s×4    : 尝试{tried} 命中{hits} 首中={firstHit} 合计{swC.ElapsedMilliseconds}ms");
+        // D: 无提示，多种子 × 3.5s
+        var swD = System.Diagnostics.Stopwatch.StartNew();
+        int hitsD = 0, triedD = 0;
+        for (int sd = 0; sd < 4; sd++)
+        {
+            var one = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, 3.5, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, null, gate, sd, false, false, true);
+            triedD++;
+            if (one.Items.Count > 0) { hitsD++; break; }
+        }
+        Console.WriteLine($"  D 无提示3.5s×4    : 尝试{triedD} 命中{hitsD} 合计{swD.ElapsedMilliseconds}ms");
+    }
+}
+
 // 4.6 多尺寸盘 对称破坏对比（离线测试集）
 if (Environment.GetEnvironmentVariable("GRIDSET") != null)
 {
