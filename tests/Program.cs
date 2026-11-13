@@ -590,32 +590,38 @@ if (Environment.GetEnvironmentVariable("SEEDTEST") != null)
         var swB = System.Diagnostics.Stopwatch.StartNew();
         var cB = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, 14.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, prev, gate, 0, false, false, true);
         Console.WriteLine($"  B 带提示单种子14s : {cB.Status} {swB.ElapsedMilliseconds}ms 件{cB.Items.Count} 等级[{string.Join(",", cB.Level)}]");
-        // C: 带提示，多种子 × 3.5s（总预算≈14s）
-        var swC = System.Diagnostics.Stopwatch.StartNew();
-        int hits = 0, tried = 0;
-        string firstHit = "-";
-        for (int sd = 0; sd < 4; sd++)
+        // C: 不同总预算 + 多种子，各跑 3 次看命中率（决定每门槛预算上限该设多少）
+        foreach (var budgetMs in new[] { 14000, 8000, 6000 })
         {
-            var one = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, 3.5, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, prev, gate, sd, false, false, true);
-            tried++;
-            if (one.Items.Count > 0)
+            int trialHits = 0;
+            var hitTimes = new List<long>();
+            int seedCount = Math.Max(1, budgetMs / 3500);
+            for (int tr = 0; tr < 3; tr++)
             {
-                hits++;
-                if (firstHit == "-") { firstHit = $"seed{sd}@{one.ElapsedMs}ms 等级[{string.Join(",", one.Level)}]"; }
-                break;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                bool hit = false;
+                for (int sd = 0; sd < seedCount; sd++)
+                {
+                    long slice = budgetMs - sw.ElapsedMilliseconds;
+                    if (slice < 600L)
+                    {
+                        break;
+                    }
+                    var one = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, slice / 1000.0, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, prev, gate, sd, false, false, true);
+                    if (one.Items.Count > 0)
+                    {
+                        hit = true;
+                        break;
+                    }
+                }
+                if (hit)
+                {
+                    trialHits++;
+                    hitTimes.Add(sw.ElapsedMilliseconds);
+                }
             }
+            Console.WriteLine($"  预算{budgetMs,5}ms 种子{seedCount}×3次: 命中{trialHits}/3 命中耗时[{string.Join(",", hitTimes)}]ms");
         }
-        Console.WriteLine($"  C 带提示3.5s×4    : 尝试{tried} 命中{hits} 首中={firstHit} 合计{swC.ElapsedMilliseconds}ms");
-        // D: 无提示，多种子 × 3.5s
-        var swD = System.Diagnostics.Stopwatch.StartNew();
-        int hitsD = 0, triedD = 0;
-        for (int sd = 0; sd < 4; sd++)
-        {
-            var one = JointGeometrySolver.Solve(stMats, stRunes, stBonus, stYang, stYin, 3.5, -1, 8, null, MaterialPolicy.MaxRepeatCount, null, null, gate, sd, false, false, true);
-            triedD++;
-            if (one.Items.Count > 0) { hitsD++; break; }
-        }
-        Console.WriteLine($"  D 无提示3.5s×4    : 尝试{triedD} 命中{hitsD} 合计{swD.ElapsedMilliseconds}ms");
     }
 }
 

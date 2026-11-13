@@ -1364,6 +1364,9 @@ namespace ZaohuaAutoCraft.Solver
             return key;
         }
 
+        /// <summary>单个覆盖门槛的总预算（多种子共享，每个种子约 3.5 秒）。实测 8 秒（4种子×2秒）命中率不足，14 秒可稳定命中 [5,3,1]。</summary>
+        static long GateBudgetMs = 14000L;
+
         /// <summary>候选等级向量在第 l 层（层数 ≥ l）的符文数。</summary>
         static int CoverageAt(int[] level, int l)
         {
@@ -1515,12 +1518,15 @@ namespace ZaohuaAutoCraft.Solver
                             // 实测同一 14 秒预算：单种子跑满 14s 全部 Unknown；切成 4 个 3.5s 的种子，
                             // 第 2 次（seed1）1.05s 就命中 [1,1,2,2,3]。找到解或已证不可行即停。
                             JointGeometrySolver.Candidate c = null;
-                            long gateBudget = Math.Max(600L, Math.Min(14000L, rem));
+                            long gateBudget = Math.Max(600L, Math.Min(GateBudgetMs, rem));
                             long gateStart = clock.ElapsedMilliseconds;
                             bool gateTried = false;
-                            for (int sd = 0; sd < 4; sd++)
+                            // 关键：每个种子固定分片，不能让第一个种子吃光总预算（否则等于没换种子）
+                            const int gateSeeds = 4;
+                            long perSeed = Math.Max(600L, gateBudget / gateSeeds);
+                            for (int sd = 0; sd < gateSeeds; sd++)
                             {
-                                long slice = gateBudget - (clock.ElapsedMilliseconds - gateStart);
+                                long slice = Math.Min(perSeed, gateBudget - (clock.ElapsedMilliseconds - gateStart));
                                 if (slice < 600L)
                                 {
                                     break;
