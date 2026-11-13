@@ -41,7 +41,7 @@ namespace ZaohuaAutoCraft.Solver
 
         public static Candidate Solve(List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin,
             double timeLimitSec, int desiredAttr, int workers, int[] priorityGroup = null, MaterialPolicy policy = MaterialPolicy.MaxRepeatCount,
-            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null, int randomSeed = 0, bool symmetryBreak = false, bool materialGoal = false)
+            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null, int randomSeed = 0, bool symmetryBreak = false, bool materialGoal = false, bool feasibilityGoal = false)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = new Candidate();
@@ -335,7 +335,12 @@ namespace ZaohuaAutoCraft.Solver
             // 7. 阶段目标（报告 §7.1）：质量阶段只优化优先组/逐层覆盖/等级；材料阶段在质量固定后优化策略/件数
             // materialGoal=true 时即使没有 fixedLevel 也走材料分支（质量用 coverageMin 锁定，报告 §5.2/§5.4）
             var obj = new List<LinearExpr>();
-            if (fixedLevel == null && !materialGoal)
+            if (feasibilityGoal)
+            {
+                // 可行性目标（报告 §5.2）：不设优化目标，达到覆盖门槛就返回首个可行解。
+                // 覆盖/等级由 coverageMin 硬约束保证，所以空目标不会降低质量要求。
+            }
+            else if (fixedLevel == null && !materialGoal)
             {
                 int maxGroup = 0;
                 for (int r = 0; r < runes.Count; r++)

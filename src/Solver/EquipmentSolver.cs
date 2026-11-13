@@ -110,8 +110,9 @@ namespace ZaohuaAutoCraft.Solver
         {
             clock.Restart();
             deadline = req.TimeLimitMs;
-            // 选项B（报告 §6.4）：紧盘/多材料输入需要联合几何模型，自动放宽预算，避免质量阶段被预算卡住
-            if (req.Unified && req.Runes.Count > 0)
+            // 报告 §5.1：不静默放大预算。紧盘输入的第三层覆盖检查单次需 10~13 秒，
+            // 若设定预算不足以跑完前沿，仅做有限放宽（最多 45 秒）并在日志与结果里明示。
+            if (req.Unified && req.Runes.Count > 0 && req.TimeLimitMs < 45000)
             {
                 int liveMats = req.Materials.Count(m => m.Stock > 0 && m.Shape.Count > 0 && !m.Attrs.All(v => v == 0));
                 if (liveMats > 80)
@@ -120,8 +121,8 @@ namespace ZaohuaAutoCraft.Solver
                         .Select(m => Packer.GetType(m.Shape).Key).Distinct().Count();
                     if (typeCount > 0 && typeCount <= 32)
                     {
-                        deadline = Math.Max(deadline, 60000L);
-                        roundLog.Add($"[自动放宽] 紧盘输入(材料{liveMats} 形状类型{typeCount})，预算 {req.TimeLimitMs}ms → {deadline}ms");
+                        deadline = 45000L;
+                        roundLog.Add($"[预算放宽] 紧盘输入(材料{liveMats} 形状类型{typeCount})，按设定 {req.TimeLimitMs}ms 跑不完整覆盖前沿，放宽到 {deadline}ms");
                     }
                 }
             }
@@ -1447,7 +1448,7 @@ namespace ZaohuaAutoCraft.Solver
                     var cov = new int[maxL];
                     JointGeometrySolver.Candidate q1 = null;
                     long checks = 0;
-                    long frontierStop = clock.ElapsedMilliseconds + (deadline - clock.ElapsedMilliseconds) * 75 / 100;
+                    long frontierStop = clock.ElapsedMilliseconds + (deadline - clock.ElapsedMilliseconds) * 85 / 100;
                     for (int l = 1; l <= maxL; l++)
                     {
                         int hi = req.Runes.Count(r => r.MaxStacks >= l);
@@ -1461,16 +1462,21 @@ namespace ZaohuaAutoCraft.Solver
                             {
                                 break;
                             }
-                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(12.0, rem / 1000.0 * 0.95)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, q1, cov);
+                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(15.0, rem / 1000.0 * 0.98)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, q1, cov, 0, false, false, true);
                             checks++;
                             if (c.Items.Count > 0)
                             {
                                 lo = mid;
                                 q1 = c;
                             }
-                            else
+                            else if (c.Status == "Infeasible")
                             {
                                 hi = mid - 1;
+                            }
+                            else
+                            {
+                                // Unknown/ModelInvalid：无法判定该层不可行，停止本层二分（报告 §5.5）
+                                break;
                             }
                         }
                         cov[l - 1] = lo;
