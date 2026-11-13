@@ -1448,6 +1448,7 @@ namespace ZaohuaAutoCraft.Solver
                     var cov = new int[maxL];
                     JointGeometrySolver.Candidate q1 = null;
                     long checks = 0;
+                    bool frontierUnproven = false;
                     long frontierStop = clock.ElapsedMilliseconds + (deadline - clock.ElapsedMilliseconds) * 85 / 100;
                     for (int l = 1; l <= maxL; l++)
                     {
@@ -1460,9 +1461,11 @@ namespace ZaohuaAutoCraft.Solver
                             long rem = frontierStop - clock.ElapsedMilliseconds;
                             if (rem < 800)
                             {
+                                frontierUnproven = true;
                                 break;
                             }
-                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(15.0, rem / 1000.0 * 0.98)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, q1, cov, 0, false, false, true);
+                            // 可行性判定只需首个满足门槛的解，越早返回越好；10 秒足以覆盖不可行的证明尝试
+                            var c = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Max(0.8, Math.Min(10.0, rem / 1000.0 * 0.98)), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, null, q1, cov, 0, false, false, true);
                             checks++;
                             if (c.Items.Count > 0)
                             {
@@ -1475,13 +1478,19 @@ namespace ZaohuaAutoCraft.Solver
                             }
                             else
                             {
-                                // Unknown/ModelInvalid：无法判定该层不可行，停止本层二分（报告 §5.5）
-                                break;
+                                // Unknown/ModelInvalid（报告 §5.5）：既不能证明该层可行也不能证明不可行。
+                                // 不把它当"已证不可行"，但继续向更低值找见证解，并标记覆盖未证明最优。
+                                frontierUnproven = true;
+                                hi = mid - 1;
                             }
                         }
                         cov[l - 1] = lo;
                     }
-                    roundLog.Add($"联合几何·覆盖前沿 覆盖[{string.Join(",", cov)}] 检查{checks}次 解{q1?.Items.Count ?? 0}");
+                    roundLog.Add($"联合几何·覆盖前沿 覆盖[{string.Join(",", cov)}] 检查{checks}次{(frontierUnproven ? "（未证最优）" : "")} 解{q1?.Items.Count ?? 0}");
+                    if (frontierUnproven)
+                    {
+                        notProvenOptimal = true;
+                    }
                     if (q1 != null && q1.Items.Count > 0)
                     {
                         cand = q1;
