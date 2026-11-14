@@ -1070,25 +1070,51 @@ namespace ZaohuaAutoCraft.Solver
             }
             var lv = s.Runes.Level;
             long score = 0;
+            int runeCount = req.Runes.Count;
             for (int g = 0; g <= maxGroup; g++)
             {
+                // 报告 §6：逐层覆盖必须按字典序比较（层1 > 层2 > 层3 > … > 总层数）。
+                // 原实现用 (1000*激活数 + 总层数)，会把 [1,1,2,2,2] 与 [1,1,1,2,3] 判为同质量，
+                // 导致后续 ReduceWaste 为省料把二层覆盖降级。
+                int maxLg = 0;
+                for (int r = 0; r < runeCount; r++)
+                {
+                    int rg = pg != null && r < pg.Length ? Math.Max(0, pg[r]) : 0;
+                    if (rg == g)
+                    {
+                        maxLg = Math.Max(maxLg, req.Runes[r].MaxStacks);
+                    }
+                }
+                long gscore = 0;
+                for (int l = 1; l <= maxLg; l++)
+                {
+                    long h = 0;
+                    for (int r = 0; r < runeCount; r++)
+                    {
+                        int rg = pg != null && r < pg.Length ? Math.Max(0, pg[r]) : 0;
+                        if (rg == g && lv[r] >= l)
+                        {
+                            h++;
+                        }
+                    }
+                    gscore = gscore * (runeCount + 1) + h;
+                }
+                long dep = 0;
+                for (int r = 0; r < runeCount; r++)
+                {
+                    int rg = pg != null && r < pg.Length ? Math.Max(0, pg[r]) : 0;
+                    if (rg == g)
+                    {
+                        dep += lv[r];
+                    }
+                }
+                gscore = gscore * 100 + dep;
                 long gw = 1;
                 for (int k = 0; k < maxGroup - g; k++)
                 {
-                    gw *= 1000;
+                    gw *= 10000000L;
                 }
-                long cov = 0, dep = 0;
-                for (int r = 0; r < req.Runes.Count; r++)
-                {
-                    int rg = pg != null && r < pg.Length ? Math.Max(0, pg[r]) : 0;
-                    if (rg != g)
-                    {
-                        continue;
-                    }
-                    cov += lv[r] >= 1 ? 1 : 0;
-                    dep += lv[r];
-                }
-                score += gw * (1000 * cov + dep);
+                score += gw * gscore;
             }
             long pol;
             if (req.MaterialPolicy == MaterialPolicy.MaxRepeatCount)
