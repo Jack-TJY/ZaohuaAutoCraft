@@ -15,7 +15,16 @@ namespace ZaohuaAutoCraft
     {
         const int WindowId = 0x5A41;
 
-        Rect rect = new Rect(40, 60, 500, 700);
+        // 字体整体放大：在 Unity IMGUI 默认字号上 +4（列表项 +3，名字长的丹方更省宽度），窗口/滚动区同步放大
+        const int FontSizeBoost = 4;
+
+        const int ListFontSizeBoost = 3;
+
+        const int DefaultWidth = 820;
+
+        const int DefaultHeight = 950;
+
+        Rect rect = new Rect(40, 30, DefaultWidth, DefaultHeight);
 
         bool visible;
 
@@ -24,6 +33,16 @@ namespace ZaohuaAutoCraft
         Vector2 listScroll, resultScroll;
 
         List<Game.DrugBridge.RecipeInfo> recipes = new List<Game.DrugBridge.RecipeInfo>();
+
+        /// <summary>按当前「显示全部 / 属性筛选 / 搜索」过滤后实际画进列表的丹方。</summary>
+        readonly List<Game.DrugBridge.RecipeInfo> shownRecipes = new List<Game.DrugBridge.RecipeInfo>();
+
+        /// <summary>属性筛选选项（第一个固定是「全部」）；打开窗口时按丹方数据重新生成。</summary>
+        List<string> categoryFilters = new List<string> { Game.DrugBridge.CategoryAll };
+
+        string[] categoryFilterArray = { Game.DrugBridge.CategoryAll };
+
+        int categoryIndex;
 
         Game.DrugBridge.RecipeInfo selected;
 
@@ -40,6 +59,9 @@ namespace ZaohuaAutoCraft
         int verifyFrames;
 
         Font font;
+
+        /// <summary>统一放大的控件样式，第一次画窗口时按皮肤默认字号创建一次。</summary>
+        GUIStyle labelStyle, buttonStyle, toggleStyle, textFieldStyle, gridStyle, itemStyle;
 
         internal static bool MouseOver;
 
@@ -84,9 +106,16 @@ namespace ZaohuaAutoCraft
         void Show()
         {
             visible = true;
+            // 字号放大后窗口一起放大（500×700 → 820×950），并按屏幕留出边距，避免底部超出屏幕
+            rect = new Rect(
+                rect.x,
+                rect.y,
+                Mathf.Clamp(Screen.width - 120, 640, DefaultWidth),
+                Mathf.Clamp(Screen.height - 90, 720, DefaultHeight));
             try
             {
                 recipes = Game.DrugBridge.GetRecipes();
+                RefreshCategoryFilters();
                 RefreshFurnace();
             }
             catch (Exception e)
@@ -94,6 +123,90 @@ namespace ZaohuaAutoCraft
                 status = "读取丹方失败：" + e.Message;
                 Plugin.Log.LogError(e);
             }
+        }
+
+        /// <summary>按当前丹方列表重建属性筛选项（只列实际出现的分类，「全部」在最前）。</summary>
+        void RefreshCategoryFilters()
+        {
+            try
+            {
+                categoryFilters = Game.DrugBridge.GetCategoryFilters(recipes);
+            }
+            catch (Exception e)
+            {
+                categoryFilters = new List<string> { Game.DrugBridge.CategoryAll };
+                Plugin.Log.LogWarning("生成丹药属性筛选失败，只显示「全部」: " + e.Message);
+            }
+            categoryFilterArray = categoryFilters.ToArray();
+            categoryIndex = Mathf.Clamp(categoryIndex, 0, categoryFilterArray.Length - 1);
+        }
+
+        string CurrentCategory()
+        {
+            if (categoryFilterArray == null || categoryFilterArray.Length == 0)
+            {
+                return Game.DrugBridge.CategoryAll;
+            }
+            return categoryFilterArray[Mathf.Clamp(categoryIndex, 0, categoryFilterArray.Length - 1)];
+        }
+
+        /// <summary>先按筛选条件把要显示的丹方挑出来；列表绘制和「共 N 条」都用它。</summary>
+        void BuildShownRecipes()
+        {
+            shownRecipes.Clear();
+            bool all = Plugin.ShowAllRecipes.Value;
+            string category = CurrentCategory();
+            bool filterByCategory = category != Game.DrugBridge.CategoryAll;
+            string keyword = search;
+            foreach (var r in recipes)
+            {
+                if (!all && !r.Unlocked)
+                {
+                    continue;
+                }
+                if (filterByCategory && !r.HasCategory(category))
+                {
+                    continue;
+                }
+                if (!string.IsNullOrEmpty(keyword) && !(r.Name ?? "").Contains(keyword) && !(r.ItemName ?? "").Contains(keyword))
+                {
+                    continue;
+                }
+                shownRecipes.Add(r);
+            }
+        }
+
+        /// <summary>
+        /// 统一放大字号。之前完全没有设置字号，用 Unity IMGUI 皮肤默认值（约 12px）；
+        /// 现在按皮肤默认字号 +4 显式设置，皮肤字号读不到（0）时按 12 算，保证字体一定比原来大。
+        /// 窗口标题栏沿用默认样式：Unity 原生标题栏高度固定，放大字号会被裁切（本任务要求避免文字被裁）。
+        /// </summary>
+        void EnsureStyles()
+        {
+            if (labelStyle != null)
+            {
+                return;
+            }
+            int baseSize = GUI.skin.label.fontSize;
+            if (baseSize <= 0)
+            {
+                baseSize = 12;
+            }
+            labelStyle = MakeStyle(GUI.skin.label, baseSize + FontSizeBoost);
+            labelStyle.wordWrap = true;
+            buttonStyle = MakeStyle(GUI.skin.button, baseSize + FontSizeBoost);
+            toggleStyle = MakeStyle(GUI.skin.toggle, baseSize + FontSizeBoost);
+            textFieldStyle = MakeStyle(GUI.skin.textField, baseSize + FontSizeBoost);
+            gridStyle = MakeStyle(GUI.skin.button, baseSize + FontSizeBoost);
+            itemStyle = MakeStyle(GUI.skin.label, baseSize + ListFontSizeBoost);
+            itemStyle.wordWrap = false; // 一条丹方一行，过长裁切，避免行高忽高忽低
+            itemStyle.clipping = TextClipping.Clip;
+            itemStyle.padding = new RectOffset(6, 6, 2, 2); // 行距和左右留白，字号放大后不挤在一起
+        }
+
+        static GUIStyle MakeStyle(GUIStyle source, int size)
+        {
+            return new GUIStyle(source) { fontSize = size };
         }
 
         void Hide()
@@ -124,15 +237,18 @@ namespace ZaohuaAutoCraft
             }
             if (font == null)
             {
-                font = Font.CreateDynamicFontFromOSFont(new[] { "Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "SimSun" }, 14);
+                int baseSize = GUI.skin.label.fontSize > 0 ? GUI.skin.label.fontSize : 12;
+                font = Font.CreateDynamicFontFromOSFont(new[] { "Microsoft YaHei", "Microsoft YaHei UI", "SimHei", "SimSun" }, baseSize + FontSizeBoost);
             }
             var oldFont = GUI.skin.font;
             GUI.skin.font = font;
             try
             {
+                EnsureStyles();
                 DrawToggleButton();
                 if (visible)
                 {
+                    // 标题栏沿用默认样式：Unity 原生窗口标题栏高度固定，放大字号会被裁切（正文样式已统一放大）
                     rect = GUI.Window(WindowId, rect, DrawWindow, "自动炼丹");
                 }
             }
@@ -149,9 +265,9 @@ namespace ZaohuaAutoCraft
         /// <summary>按钮当前位置。配置里是负数时用默认位置：右上角往下一点，避开游戏自己的按钮。</summary>
         Rect ButtonRect()
         {
-            float x = dragged ? dragPos.x : Plugin.ButtonX.Value < 0 ? Screen.width - 190 : Plugin.ButtonX.Value;
+            float x = dragged ? dragPos.x : Plugin.ButtonX.Value < 0 ? Screen.width - 220 : Plugin.ButtonX.Value;
             float y = dragged ? dragPos.y : Plugin.ButtonY.Value < 0 ? 90 : Plugin.ButtonY.Value;
-            return new Rect(Mathf.Clamp(x, 0, Screen.width - 170), Mathf.Clamp(y, 0, Screen.height - 30), 170, 30);
+            return new Rect(Mathf.Clamp(x, 0, Screen.width - 200), Mathf.Clamp(y, 0, Screen.height - 34), 200, 34);
         }
 
         /// <summary>单击开关窗口，按住拖动可以挪位置，松手后记到配置里。</summary>
@@ -202,7 +318,7 @@ namespace ZaohuaAutoCraft
                 }
                 e.Use();
             }
-            GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})");
+            GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})", buttonStyle);
         }
 
         static readonly string[] ModeNames = { "最少材料", "最低品阶", "最多成丹", "最高品质", "最多可炼次数" };
@@ -213,30 +329,44 @@ namespace ZaohuaAutoCraft
 
         void DrawWindow(int id)
         {
-            GUILayout.Label(furnaceText);
+            // 先按「显示全部 / 属性筛选 / 搜索」算出列表内容（计数和列表共用）
+            BuildShownRecipes();
+
+            GUILayout.Label(furnaceText, labelStyle);
             GUILayout.BeginHorizontal();
-            bool all = GUILayout.Toggle(Plugin.ShowAllRecipes.Value, "显示全部丹方");
+            bool all = GUILayout.Toggle(Plugin.ShowAllRecipes.Value, "显示全部丹方", toggleStyle);
             if (all != Plugin.ShowAllRecipes.Value)
             {
                 Plugin.ShowAllRecipes.Value = all;
             }
-            GUILayout.Label("搜索", GUILayout.Width(36));
-            search = GUILayout.TextField(search ?? "", GUILayout.Width(160));
+            GUILayout.Label("搜索", labelStyle, GUILayout.Width(44));
+            search = GUILayout.TextField(search ?? "", textFieldStyle, GUILayout.Width(190), GUILayout.Height(30));
+            GUILayout.FlexibleSpace();
+            GUILayout.Label($"共 {shownRecipes.Count} 条", labelStyle);
             GUILayout.EndHorizontal();
 
-            listScroll = GUILayout.BeginScrollView(listScroll, GUILayout.Height(190));
-            foreach (var r in recipes)
+            // 按丹药提升的属性筛选：分类来自产物物品 TbItemCfg.useEff / typeId，不硬编码丹方名单
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("属性筛选", labelStyle, GUILayout.Width(76));
+            int newCategory = GUILayout.SelectionGrid(categoryIndex, categoryFilterArray, 6, gridStyle, GUILayout.ExpandWidth(true));
+            GUILayout.EndHorizontal();
+            if (newCategory != categoryIndex)
             {
-                if (!all && !r.Unlocked)
-                {
-                    continue;
-                }
-                if (!string.IsNullOrEmpty(search) && !(r.Name ?? "").Contains(search) && !(r.ItemName ?? "").Contains(search))
-                {
-                    continue;
-                }
-                string label = $"{(r == selected ? "▶ " : "")}{r.ItemName}（{r.Name}）  {r.AttrText}{(r.Unlocked ? "" : "  [未学]")}";
-                if (GUILayout.Button(label, GUI.skin.label))
+                categoryIndex = newCategory;
+                // 列表条数变了，结束本帧 GUI，避免 Layout/Repaint 控件数不一致报错
+                GUIUtility.ExitGUI();
+            }
+
+            listScroll = GUILayout.BeginScrollView(listScroll, GUILayout.Height(230));
+            if (shownRecipes.Count == 0)
+            {
+                GUILayout.Label("（当前筛选没有丹方）", labelStyle);
+            }
+            foreach (var r in shownRecipes)
+            {
+                // 丹方名后跟耐药性（游戏自己的 TbDrugMaxImpl.GetDrugTextShow：已用/上限，或「无」）
+                string label = $"{(r == selected ? "▶ " : "")}{r.ItemName}（{r.Name}）  耐药性：{r.Resistance}  {r.AttrText}{(r.Unlocked ? "" : "  [未学]")}";
+                if (GUILayout.Button(label, itemStyle))
                 {
                     selected = r;
                     result = null;
@@ -248,7 +378,7 @@ namespace ZaohuaAutoCraft
             GUILayout.EndScrollView();
 
             int mode = Mathf.Clamp((int)Plugin.DefaultMode.Value, 0, ModeNames.Length - 1);
-            int newMode = GUILayout.SelectionGrid(mode, ModeNames, 3);
+            int newMode = GUILayout.SelectionGrid(mode, ModeNames, 3, gridStyle, GUILayout.ExpandWidth(true));
             if (newMode != mode)
             {
                 Plugin.DefaultMode.Value = (DrugMode)newMode;
@@ -257,20 +387,20 @@ namespace ZaohuaAutoCraft
 
             if (selected != null)
             {
-                GUILayout.Label($"已选：{selected.ItemName}  要求 {selected.AttrText}");
+                GUILayout.Label($"已选：{selected.ItemName}  属性：{selected.Category}  耐药性：{selected.Resistance}  要求 {selected.AttrText}", labelStyle);
                 GUI.enabled = running == null;
-                if (GUILayout.Button(running == null ? $"计算摆法（{ModeNames[newMode]}）" : "计算中…", GUILayout.Height(28)))
+                if (GUILayout.Button(running == null ? $"计算摆法（{ModeNames[newMode]}）" : "计算中…", buttonStyle, GUILayout.Height(34)))
                 {
                     StartSolve(false);
                     GUIUtility.ExitGUI();
                 }
                 GUI.enabled = true;
             }
-            GUILayout.Label(status);
+            GUILayout.Label(status, labelStyle);
 
             if (result != null && result.Solutions.Count == 0 && !lastTopUp && running == null && selected != null)
             {
-                if (GUILayout.Button("建议补料（算出最便宜的买法）", GUILayout.Height(26)))
+                if (GUILayout.Button("建议补料（算出最便宜的买法）", buttonStyle, GUILayout.Height(32)))
                 {
                     StartSolve(true);
                     GUIUtility.ExitGUI();
@@ -283,25 +413,25 @@ namespace ZaohuaAutoCraft
                 {
                     var s = result.Solutions[i];
                     string head = $"方案{i + 1}：{s.PieceCount}件 成丹{s.Count} 品质{s.Quality}" + (lastTopUp ? $" 补料约{s.BuyCost}灵石" : $" 可炼{s.Batches}次 最高{s.MaxGrade}阶 价值{s.Price}灵石");
-                    if (GUILayout.Toggle(chosen == i, head) && chosen != i)
+                    if (GUILayout.Toggle(chosen == i, head, toggleStyle) && chosen != i)
                     {
                         chosen = i;
                         GUIUtility.ExitGUI();
                     }
                 }
                 var sol = result.Solutions[Mathf.Clamp(chosen, 0, result.Solutions.Count - 1)];
-                resultScroll = GUILayout.BeginScrollView(resultScroll, GUILayout.Height(130));
+                resultScroll = GUILayout.BeginScrollView(resultScroll, GUILayout.Height(150));
                 foreach (var g in sol.Placements.GroupBy(p => (p.Side, p.Material)).OrderBy(g => g.Key.Side))
                 {
                     int buy = lastTopUp && sol.ToBuy.TryGetValue(g.Key.Material, out int b) ? b : 0;
-                    GUILayout.Label($"{(g.Key.Side == Side.Yang ? "阳" : "阴")}  {g.Key.Material.Name} ×{g.Count()}    （{Game.DrugBridge.AttrText(g.Key.Material.Attrs)}）" + (buy > 0 ? $"  需购买 {buy}" : ""));
+                    GUILayout.Label($"{(g.Key.Side == Side.Yang ? "阳" : "阴")}  {g.Key.Material.Name} ×{g.Count()}    （{Game.DrugBridge.AttrText(g.Key.Material.Attrs)}）" + (buy > 0 ? $"  需购买 {buy}" : ""), labelStyle);
                 }
                 GUILayout.EndScrollView();
                 if (lastTopUp)
                 {
-                    GUILayout.Label("买齐标出的材料后，用上面的模式重新计算即可摆放。价格按物品基础价估算。");
+                    GUILayout.Label("买齐标出的材料后，用上面的模式重新计算即可摆放。价格按物品基础价估算。", labelStyle);
                 }
-                else if (GUILayout.Button("摆上", GUILayout.Height(30)))
+                else if (GUILayout.Button("摆上", buttonStyle, GUILayout.Height(36)))
                 {
                     try
                     {
@@ -330,13 +460,13 @@ namespace ZaohuaAutoCraft
             var entry = UsesPlacementTime(m) ? Plugin.PlacementTimeLimitMs : Plugin.TimeLimitMs;
             int sec = Mathf.Max(1, entry.Value / 1000);
             GUILayout.BeginHorizontal();
-            GUILayout.Label($"最长计算时间：{sec} 秒", GUILayout.Width(150));
+            GUILayout.Label($"最长计算时间：{sec} 秒", labelStyle, GUILayout.Width(190));
             GUI.enabled = running == null;
-            if (GUILayout.Button("−", GUILayout.Width(28)) && sec > 1)
+            if (GUILayout.Button("−", buttonStyle, GUILayout.Width(34)) && sec > 1)
             {
                 entry.Value = (sec - 1) * 1000;
             }
-            if (GUILayout.Button("+", GUILayout.Width(28)) && sec < 120)
+            if (GUILayout.Button("+", buttonStyle, GUILayout.Width(34)) && sec < 120)
             {
                 entry.Value = (sec + 1) * 1000;
             }
@@ -344,7 +474,7 @@ namespace ZaohuaAutoCraft
             GUILayout.EndHorizontal();
             GUILayout.Label(UsesPlacementTime(m)
                 ? "时间越长，越能多试垫料和摆位，丹数/品质越高；计算期间游戏不卡，但要等这么久。"
-                : "一般 1 秒内就能算完，只有材料很多或丹炉很小时才会用满；用满仍无解可调大再试。");
+                : "一般 1 秒内就能算完，只有材料很多或丹炉很小时才会用满；用满仍无解可调大再试。", labelStyle);
         }
 
         void StartSolve(bool topUp)
