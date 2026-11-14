@@ -83,7 +83,7 @@ namespace ZaohuaAutoCraft.Game
         /// </summary>
         public static readonly string[] CategoryOrder =
         {
-            "气血", "速度", "护甲", "护罩", "物攻", "物防", "术攻", "术防", "灵根",
+            "气血上限", "回血", "速度", "护甲", "护罩", "物攻", "物防", "术攻", "术防", "灵根",
             "丹田", "神魂", "气运", "寿元", "骨龄", "修炼", "突破", "辅助"
         };
 
@@ -94,8 +94,8 @@ namespace ZaohuaAutoCraft.Game
         /// </summary>
         static readonly Dictionary<string, string> EffectCategories = new Dictionary<string, string>
         {
-            { "UpdateHp", "气血" },              // 恢复 N 点气血
-            { "UpdateHpLimit", "气血" },         // 气血上限 +N
+            { "UpdateHp", "回血" },              // 恢复 N 点气血
+            { "UpdateHpLimit", "气血上限" },     // 气血上限 +N（与「回血」分开：一次性回复 vs 永久上限）
             { "UpdateAdvance", "速度" },         // 速度上限 +N
             { "UpdateArmor", "护甲" },           // 护甲上限 +N
             { "UpdateShield", "护罩" },          // 护罩上限 +N
