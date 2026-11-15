@@ -793,6 +793,106 @@ if (Environment.GetEnvironmentVariable("SHOE3") != null)
     }
 }
 
+// 4.11 并行策略对照：串行 4种子x16线程 vs 并行 4种子x4线程
+if (Environment.GetEnvironmentVariable("PARALLELTEST") != null)
+{
+    string mode = Environment.GetEnvironmentVariable("PARALLELTEST"); // "A" 串行 / "B" 并行
+    Console.WriteLine($"===== 并行策略对照 mode={mode} =====");
+    CpSatQuantity.Workers = 16;
+    var plInv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+    var plMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, plInv.TryGetValue(m.Id, out var plc) ? plc : 0)).ToList();
+    var plRunes = new List<Rune>
+    {
+        new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
+        new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
+        new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
+        new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
+        new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
+    };
+    var plY = new Grid(7, 10);
+    var plN = new Grid(7, 10);
+    int[] plBonus = new int[Attr.Count];
+    // 前置：解 [5,3,0] 拿提示（与真实前沿一致）
+    var plPrev = JointGeometrySolver.Solve(plMats, plRunes, plBonus, plY, plN, 10.0, -1, 16, null, MaterialPolicy.MaxRepeatCount, null, null, new[] { 5, 3, 0 }, 0, false, false, true);
+    Console.WriteLine($"前置[5,3,0]: {plPrev.Status} 等级[{string.Join(",", plPrev.Level)}]");
+    var plGate = new[] { 5, 3, 1 };
+    const int trials = 5;
+    for (int tr = 0; tr < trials; tr++)
+    {
+        bool hit = false;
+        long hitMs = -1;
+        int hitSeed = -1;
+        string hitLvl = "-";
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        if (mode == "A")
+        {
+            // 串行：4 种子 x 7.5s（合计 30s），每次 16 线程
+            for (int sd = 0; sd < 4; sd++)
+            {
+                var c = JointGeometrySolver.Solve(plMats, plRunes, plBonus, plY, plN, 7.5, -1, 16, null, MaterialPolicy.MaxRepeatCount, null, plPrev, plGate, sd, false, false, true);
+                if (c.Items.Count > 0)
+                {
+                    hit = true;
+                    hitMs = sw.ElapsedMilliseconds;
+                    hitSeed = sd;
+                    hitLvl = string.Join(",", c.Level);
+                    break;
+                }
+                if (c.Status == "Infeasible")
+                {
+                    break;
+                }
+            }
+        }
+        else
+        {
+            // 并行：4 种子各 4 线程、各自最多 30s，先命中者胜
+            var tasks = new System.Threading.Tasks.Task<JointGeometrySolver.Candidate>[4];
+            for (int i = 0; i < 4; i++)
+            {
+                int sd = i;
+                tasks[i] = System.Threading.Tasks.Task.Run(() => JointGeometrySolver.Solve(plMats, plRunes, plBonus, plY, plN, 30.0, -1, 4, null, MaterialPolicy.MaxRepeatCount, null, plPrev, plGate, sd, false, false, true));
+            }
+            while (sw.ElapsedMilliseconds < 32000)
+            {
+                bool allDone = true;
+                for (int i = 0; i < 4; i++)
+                {
+                    if (!tasks[i].IsCompleted)
+                    {
+                        allDone = false;
+                        continue;
+                    }
+                    if (!hit && tasks[i].Result != null && tasks[i].Result.Items.Count > 0)
+                    {
+                        hit = true;
+                        hitMs = sw.ElapsedMilliseconds;
+                        hitSeed = i;
+                        hitLvl = string.Join(",", tasks[i].Result.Level);
+                    }
+                }
+                if (hit || allDone)
+                {
+                    break;
+                }
+                System.Threading.Thread.Sleep(40);
+            }
+            if (!hit)
+            {
+                try { System.Threading.Tasks.Task.WaitAll(tasks, 32000); } catch { }
+            }
+        }
+        if (hit)
+        {
+            Console.WriteLine($"[{mode}] 试验{tr}: 命中 {hitMs,6}ms seed={hitSeed} 等级[{hitLvl}]");
+        }
+        else
+        {
+            Console.WriteLine($"[{mode}] 试验{tr}: 未命中 {sw.ElapsedMilliseconds,6}ms");
+        }
+    }
+}
+
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）
 if (Environment.GetEnvironmentVariable("CPSAT") != null)
 {
