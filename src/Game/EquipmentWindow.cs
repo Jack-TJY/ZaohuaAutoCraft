@@ -257,11 +257,6 @@ namespace ZaohuaAutoCraft
             GUI.Button(ButtonRect(), (visible ? "关闭自动摆放" : "自动摆放") + $" ({Plugin.ToggleKey.Value})");
         }
 
-        // 满足最多符文是所有模式的内在前提，不再作为独立模式展示
-        static readonly string[] ModeNames = { "指定符文优先", "最少材料", "最低品阶", "最多炼制次数", "最大属性" };
-
-        static readonly EquipmentMode[] ModeValues = { EquipmentMode.MaxRuneLevel, EquipmentMode.MinPieces, EquipmentMode.LowGrade, EquipmentMode.MaxBatches, EquipmentMode.MaxAttr };
-
         void DrawWindow(int id)
         {
             GUILayout.Label(furnaceText);
@@ -549,7 +544,9 @@ namespace ZaohuaAutoCraft
                     // 内部 0 按用户确认为默认金（不再显示「无」）
                     string attrName = attr >= 1 && attr <= 8 ? Attr.Names[attr - 1] : Attr.Names[0];
                     status = $"✓ 游戏已识别，生效符文 {active} 个，法器属性 {attrName}。请点游戏里的「炼制」。";
-                    if (request?.Mode == EquipmentMode.MaxAttr)
+                    // 指定了成品属性时，核对游戏实际归属是否与目标一致。
+                    // 统一流程下不再使用 EquipmentMode（该字段不再被赋值），改按 TargetAttr 判断。
+                    if (request != null && request.TargetAttr >= 0)
                     {
                         int actual = attr >= 1 && attr <= 8 ? attr - 1 : 0;
                         int ta = Math.Max(0, request.TargetAttr);
