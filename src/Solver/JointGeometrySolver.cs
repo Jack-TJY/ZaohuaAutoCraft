@@ -41,7 +41,7 @@ namespace ZaohuaAutoCraft.Solver
 
         public static Candidate Solve(List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin,
             double timeLimitSec, int desiredAttr, int workers, int[] priorityGroup = null, MaterialPolicy policy = MaterialPolicy.MaxRepeatCount,
-            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null, int randomSeed = 0, bool symmetryBreak = false, bool materialGoal = false, bool feasibilityGoal = false)
+            int[] fixedLevel = null, Candidate hint = null, int[] coverageMin = null, int randomSeed = 0, bool symmetryBreak = false, bool materialGoal = false, bool feasibilityGoal = false, int batchesTarget = 0)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = new Candidate();
@@ -367,18 +367,32 @@ namespace ZaohuaAutoCraft.Solver
             {
             if (policy == MaterialPolicy.MaxRepeatCount)
             {
-                long maxStock = active.Count > 0 ? active.Max(i => Math.Max(1L, Math.Min(materials[i].Stock, 100000L))) : 1;
-                var bVar = model.NewIntVar(1, Math.Max(1, maxStock), "batches");
-                foreach (int i in active)
+                if (batchesTarget > 0)
                 {
-                    long stock = Math.Min(materials[i].Stock, 10000L);
-                    var usage = model.NewIntVar(0, stock, $"u{i}");
-                    model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(q[i, 0], 1), LinearExpr.Term(q[i, 1], 1), LinearExpr.Term(usage, -1) }) == 0);
-                    var prod = model.NewIntVar(0, Math.Max(1, maxStock), $"p{i}");
-                    model.AddMultiplicationEquality(prod, bVar, usage);
-                    model.Add(LinearExpr.Term(prod, 1) <= stock);
+                    // 固定批次数 B 的可行性判定（A/B 实验）：b×usage≤stock 等价于 usage_i ≤ floor(stock_i/B)，
+                    // 去掉整数乘法后约束变成纯线性，CP-SAT 能给出可证明的 Optimal/Infeasible。
+                    foreach (int i in active)
+                    {
+                        long stock = Math.Min(materials[i].Stock, 10000L);
+                        long perBatch = stock / batchesTarget;
+                        model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(q[i, 0], 1), LinearExpr.Term(q[i, 1], 1) }) <= perBatch);
+                    }
                 }
-                obj.Add(LinearExpr.Term(bVar, 100000000L));
+                else
+                {
+                    long maxStock = active.Count > 0 ? active.Max(i => Math.Max(1L, Math.Min(materials[i].Stock, 100000L))) : 1;
+                    var bVar = model.NewIntVar(1, Math.Max(1, maxStock), "batches");
+                    foreach (int i in active)
+                    {
+                        long stock = Math.Min(materials[i].Stock, 10000L);
+                        var usage = model.NewIntVar(0, stock, $"u{i}");
+                        model.Add(LinearExpr.Sum(new List<LinearExpr> { LinearExpr.Term(q[i, 0], 1), LinearExpr.Term(q[i, 1], 1), LinearExpr.Term(usage, -1) }) == 0);
+                        var prod = model.NewIntVar(0, Math.Max(1, maxStock), $"p{i}");
+                        model.AddMultiplicationEquality(prod, bVar, usage);
+                        model.Add(LinearExpr.Term(prod, 1) <= stock);
+                    }
+                    obj.Add(LinearExpr.Term(bVar, 100000000L));
+                }
             }
             else
             {

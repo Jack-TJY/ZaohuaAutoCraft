@@ -690,6 +690,58 @@ if (Environment.GetEnvironmentVariable("COLORCAP") != null)
     }
 }
 
+// 4.8 材料阶段 A/B：乘法批次模型 vs 固定批次数B二分
+if (Environment.GetEnvironmentVariable("BATCHTEST") != null)
+{
+    Console.WriteLine("===== 材料阶段 A/B（乘法批次 vs 固定B二分）=====");
+    CpSatQuantity.Workers = 16;
+    var btInv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+    var btMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, btInv.TryGetValue(m.Id, out var bc) ? bc : 0)).ToList();
+    var btRunes = new List<Rune>
+    {
+        new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
+        new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
+        new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
+        new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
+        new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
+    };
+    var bY = new Grid(7, 10);
+    var bN = new Grid(7, 10);
+    int[] bBonus = new int[Attr.Count];
+    long BatchesOf(JointGeometrySolver.Candidate c)
+    {
+        if (c == null || c.Items.Count == 0) { return 0; }
+        var use = new Dictionary<object, int>();
+        foreach (var it in c.Items) { use.TryGetValue(it.mat, out var v); use[it.mat] = v + 1; }
+        long b = long.MaxValue;
+        foreach (var kv in use) { var mi = (Material)kv.Key; if (mi.Stock <= 0) { return 0; } b = Math.Min(b, mi.Stock / kv.Value); }
+        return b == long.MaxValue ? 0 : b;
+    }
+    var qg = JointGeometrySolver.Solve(btMats, btRunes, bBonus, bY, bN, 20.0, -1, 16, null, MaterialPolicy.MaxRepeatCount, null, null, new[] { 5, 3, 1 }, 0, false, false, true);
+    Console.WriteLine($"质量候选: {qg.Status} 等级[{string.Join(",", qg.Level)}] 件{qg.Items.Count} 批次{BatchesOf(qg)}");
+    var btLvl = qg.Level;
+    for (int t = 0; t < 3; t++)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var a = JointGeometrySolver.Solve(btMats, btRunes, bBonus, bY, bN, 12.0, -1, 16, null, MaterialPolicy.MaxRepeatCount, btLvl, qg, null, 0, false, true);
+        Console.WriteLine($"  A 乘法批次 t={t}: {a.Status,-9} {sw.ElapsedMilliseconds,5}ms 件{a.Items.Count,2} 批次{BatchesOf(a)}");
+    }
+    for (int t = 0; t < 3; t++)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        int lo = 1, hi = 64, probes = 0;
+        JointGeometrySolver.Candidate best = null;
+        while (lo < hi)
+        {
+            int mid = (lo + hi + 1) / 2;
+            var c = JointGeometrySolver.Solve(btMats, btRunes, bBonus, bY, bN, 8.0, -1, 16, null, MaterialPolicy.MaxRepeatCount, btLvl, qg, null, 0, false, true, false, mid);
+            probes++;
+            if (c.Items.Count > 0) { lo = mid; best = c; } else { hi = mid - 1; }
+        }
+        Console.WriteLine($"  B 固定B二分 t={t}: 探针{probes} {sw.ElapsedMilliseconds,5}ms 最优批次{lo} 件{best?.Items.Count ?? 0}");
+    }
+}
+
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）
 if (Environment.GetEnvironmentVariable("CPSAT") != null)
 {
