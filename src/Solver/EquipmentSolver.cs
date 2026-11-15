@@ -99,6 +99,12 @@ namespace ZaohuaAutoCraft.Solver
 
         public static Action<string> Debug;
 
+        /// <summary>
+        /// 覆盖前沿的「分解法三态门槛」开关（数量模型 → 阴阳两面装填 → Feasible/Infeasible/Unknown）。
+        /// 由 Plugin 按配置初始化；关闭时完全回退旧行为（分解法只用于证不可行剪枝，可行/未决都交给联合模型）。
+        /// </summary>
+        public static bool DecomposedGate = true;
+
         public EquipmentSolver(EquipmentRequest req)
         {
             this.req = req;
@@ -1477,6 +1483,18 @@ namespace ZaohuaAutoCraft.Solver
             return ga < gb;
         }
 
+        /// <summary>分解法命中的摆法 → EquipmentSolution（Finalize 结算符文等级），交给 Verify 复核。</summary>
+        EquipmentSolution SolutionFromGate(GateResult gate)
+        {
+            var sol = new EquipmentSolution();
+            foreach (var it in gate.Items)
+            {
+                sol.Placements.Add(new Placement { Material = it.mat, Side = it.side, X = it.x, Y = it.y, Rotate = it.rot });
+            }
+            Finalize(sol);
+            return sol;
+        }
+
         /// <summary>按形状类型联合建模（报告 §6）：几何与数量在同一模型，用于分解路径反复装不下时。</summary>
         List<EquipmentSolution> SolveJointUnified()
         {
@@ -1537,17 +1555,57 @@ namespace ZaohuaAutoCraft.Solver
                                 frontierUnproven = true;
                                 break;
                             }
-                            // 覆盖门槛先用「数量模型 → 装填检查 → 形状排除约束 → 重解」循环证不可行
-                            // （离线实测鞋子2覆盖门槛[5,3,2]约 0.77s 可证），已证则直接收缩上界，
-                            // 省掉约 14s 的多种子联合求解；未证明则照旧走下面的多种子联合求解。
-                            // 只有数量模型返回 Infeasible 才剪枝，Unknown/超时一律视为未证明。
-                            if (CoverageGateProver.TryProveInfeasible(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin,
-                                req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cov, Math.Min(2500L, rem / 5), out var proofDetail))
+                            // 覆盖门槛三态（报告 §1/§2.1/§6）：分解法「数量模型 → 阴阳两面装填」既擅长证不可行，
+                            // 装填成功时还能直接给出可行摆法（离线实测 7x10 [1,1,2,2,3] 0.10s，远快于联合模型的数秒）。
+                            // 只有明确 Infeasible 才剪枝；Feasible 必须经 EquipmentSolver.Verify 复核通过才采用；Unknown 一律保守。
+                            long decomBudgetMs = DecomposedGate ? Math.Min(3000L, rem / 8) : Math.Min(2500L, rem / 5);
+                            var gate = CoverageGateProver.TryProve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin,
+                                req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cov, decomBudgetMs);
+                            if (gate.Outcome == GateOutcome.Infeasible)
                             {
-                                roundLog.Add($"联合几何·覆盖门槛[{string.Join(",", cov)}] 已证不可行 {proofDetail}");
+                                roundLog.Add($"联合几何·覆盖门槛[{string.Join(",", cov)}] 分解法证不可行 {gate.Detail} {gate.ElapsedMs}ms");
                                 hi = mid - 1;
                                 checks++;
                                 continue;
+                            }
+                            if (gate.Outcome == GateOutcome.Feasible)
+                            {
+                                if (!DecomposedGate)
+                                {
+                                    // 关闭分解法：完全沿用旧行为（旧证明器找到可装填时也只返回 false），不采用摆法，交回联合模型
+                                    roundLog.Add($"联合几何·覆盖门槛[{string.Join(",", cov)}] 分解法命中但开关关闭 {gate.ElapsedMs}ms，交回联合模型");
+                                }
+                                else
+                                {
+                                    var gsol = SolutionFromGate(gate);
+                                    string gerr = gsol == null ? "无摆法" : Verify(req, gsol);
+                                    if (gerr == null && !Satisfies(gsol.Runes.Level, cov))
+                                    {
+                                        gerr = "覆盖门槛未满足";
+                                    }
+                                    if (gerr == null)
+                                    {
+                                        // 复核通过才采用：作为该层可行见证（lo=mid），跳过联合模型多种子求解
+                                        var gc = new JointGeometrySolver.Candidate
+                                        {
+                                            Status = "Feasible",
+                                            ElapsedMs = gate.ElapsedMs,
+                                            Level = gsol.Runes.Level
+                                        };
+                                        gc.Items.AddRange(gate.Items);
+                                        q1 = gc;
+                                        cand = gc;
+                                        lo = mid;
+                                        checks++;
+                                        roundLog.Add($"联合几何·覆盖门槛[{string.Join(",", cov)}] 分解法命中 {gate.ElapsedMs}ms 件{gc.Items.Count} 等级[{string.Join(",", gc.Level)}] 复核OK");
+                                        continue;
+                                    }
+                                    roundLog.Add($"联合几何·覆盖门槛[{string.Join(",", cov)}] 分解法命中但复核不过（{gerr}）{gate.ElapsedMs}ms，视为未决");
+                                }
+                            }
+                            else
+                            {
+                                roundLog.Add($"联合几何·覆盖门槛[{string.Join(",", cov)}] 分解法未决（{gate.Detail}）{gate.ElapsedMs}ms");
                             }
                             // 实测：即使等级提示与新增覆盖门槛不一致，材料数量维度的 warm start 仍有价值
                             // （去掉提示后 [5,3,1] 门槛的命中率明显下降），因此始终沿用上一步的候选作为提示。

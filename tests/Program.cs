@@ -8,6 +8,15 @@ using Google.OrTools.Sat;
 using ZaohuaAutoCraft.Solver;
 using ZaohuaAutoCraft.Tests;
 
+// 覆盖前沿分解法三态开关（默认开；EquipmentDecomposedGate=0/false 关闭，用于 A/B 对照实测）
+{
+    var gateEnv = Environment.GetEnvironmentVariable("EquipmentDecomposedGate");
+    if (!string.IsNullOrEmpty(gateEnv))
+    {
+        EquipmentSolver.DecomposedGate = gateEnv != "0" && !gateEnv.Equals("false", StringComparison.OrdinalIgnoreCase);
+    }
+}
+
 // 合成炼器测试（不依赖解包数据）：SYNTH=1 时运行后退出
 if (Environment.GetEnvironmentVariable("SYNTH") == "1")
 {
@@ -961,6 +970,7 @@ if (Environment.GetEnvironmentVariable("FLOWTEST") != null)
     }
     int rounds = int.TryParse(Environment.GetEnvironmentVariable("FLOWROUNDS"), out var rr) ? rr : 3;
     int level9 = 0, total = 0;
+    int gateHitTotal = 0, gateInfTotal = 0, gateUnkTotal = 0;
     for (int r = 0; r < rounds; r++)
     {
         foreach (var pol in new[] { MaterialPolicy.MaxRepeatCount, MaterialPolicy.LowGradeFirst })
@@ -978,10 +988,25 @@ if (Environment.GetEnvironmentVariable("FLOWTEST") != null)
             string mat = "-";
             var m2 = System.Text.RegularExpressions.Regex.Match(res.RoundLog ?? "", @"联合几何·材料 (\w+) (\d+)ms 件(\d+) 等级\[([^\]]*)\] 批次(\d+)");
             if (m2.Success) { mat = $"{m2.Groups[1].Value} {m2.Groups[2].Value}ms {m2.Groups[3].Value}件 批次{m2.Groups[5].Value}"; }
-            Console.WriteLine($"[轮{r + 1}·{pol}] 总耗时{res.ElapsedMs}ms 覆盖{cov} 材料{mat} 等级[{lvl}] 总计{sum}");
+            int gateHit = System.Text.RegularExpressions.Regex.Matches(res.RoundLog ?? "", @"分解法命中 ").Count;
+            int gateInf = System.Text.RegularExpressions.Regex.Matches(res.RoundLog ?? "", @"分解法证不可行").Count;
+            int gateUnk = System.Text.RegularExpressions.Regex.Matches(res.RoundLog ?? "", @"分解法未决").Count;
+            gateHitTotal += gateHit;
+            gateInfTotal += gateInf;
+            gateUnkTotal += gateUnk;
+            int pc = res.Solutions.Count > 0 ? res.Solutions[0].PieceCount : 0;
+            int bt = res.Solutions.Count > 0 ? res.Solutions[0].Batches : 0;
+            Console.WriteLine($"[轮{r + 1}·{pol}] 总耗时{res.ElapsedMs}ms 覆盖{cov} 材料{mat} 等级[{lvl}] 总计{sum} 件{pc} 批次{bt} 分解(命中{gateHit}/证不可行{gateInf}/未决{gateUnk})");
+            if (Environment.GetEnvironmentVariable("FLOWLOG") != null && !string.IsNullOrEmpty(res.RoundLog))
+            {
+                foreach (var seg in res.RoundLog.Split(new[] { " | " }, StringSplitOptions.None))
+                {
+                    Console.WriteLine("    " + seg);
+                }
+            }
         }
     }
-    Console.WriteLine($"汇总：总等级>=9 的 {level9}/{total}");
+    Console.WriteLine($"汇总：总等级>=9 的 {level9}/{total}；分解法命中{gateHitTotal}/证不可行{gateInfTotal}/未决{gateUnkTotal}");
 }
 
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）

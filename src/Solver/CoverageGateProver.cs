@@ -6,11 +6,12 @@ using System.Linq;
 namespace ZaohuaAutoCraft.Solver
 {
     /// <summary>
-    /// 覆盖门槛不可行证明器（离线报告方案）：对覆盖门槛的每个「最小等级向量」，
+    /// 覆盖门槛三态证明/求解器（离线报告方案）：对覆盖门槛的每个「最小等级向量」，
     /// 反复执行「数量模型求解 → 阴阳两面几何装填 → 装不下的形状多重集作为 ShapeCut 回灌重解」，
-    /// 直到数量模型返回 Infeasible（该向量已证不可行）或轮次/预算用尽。
-    /// 只有全部最小向量都被数量模型证 Infeasible 才返回 true；其余任何情况
-    /// （Unknown / 超时 / 装填超时 / 组合超限 / 异常）一律返回 false（未证明）。
+    /// 直到数量模型返回 Infeasible（该向量已证不可行）、装填成功（拿到可行摆法）或轮次/预算用尽。
+    /// 结论三态：全部最小向量都被数量模型证 Infeasible 才返回 Infeasible；
+    /// 任一向量两面都装填成功则返回 Feasible 并带回该摆法；
+    /// 其余任何情况（Unknown / 超时 / 装填超时 / 组合超限 / 异常）一律返回 Unknown（绝不能当不可行）。
     ///
     /// 正确性要点：
     /// 1. 覆盖门槛可行 ⇒ 存在一个「最小等级向量」也可行：把可行解的等级逐项调低到不能再降，
@@ -33,6 +34,36 @@ namespace ZaohuaAutoCraft.Solver
     ///   （两个排列向量更是在无切割的第 0 轮就直接 Infeasible）。
     /// 证明目标是「不可行」，目标函数只影响枚举顺序、不影响可行性结论，故这里用后者作为证明引擎。
     /// </summary>
+    public enum GateOutcome
+    {
+        /// <summary>拿到真实可行的摆法（Items 带材料/阴阳面/坐标/旋转），调用方必须自行复核后再采用。</summary>
+        Feasible,
+
+        /// <summary>覆盖门槛已证不可行：不存在任何同时满足它的等级向量与材料摆法。</summary>
+        Infeasible,
+
+        /// <summary>未证明（超时 / 装填超时 / 数量模型 Unknown / 组合超限 / 异常）。绝不能当作不可行剪枝。</summary>
+        Unknown
+    }
+
+    /// <summary>覆盖门槛三态结果。Feasible 时 Items 等价于 JointGeometrySolver.Candidate.Items 的摆法。</summary>
+    public class GateResult
+    {
+        public GateOutcome Outcome = GateOutcome.Unknown;
+
+        /// <summary>Feasible 时的摆法：材料、阴阳面、盘内坐标(x,y)、旋转。</summary>
+        public List<(Material mat, Side side, int x, int y, int rot)> Items = new List<(Material, Side, int, int, int)>();
+
+        /// <summary>Feasible 时命中的最小等级向量（实际等级请由调用方按摆法结算，只会不低于它）。</summary>
+        public int[] Level = new int[0];
+
+        /// <summary>诊断文本（结论 / 枚举数 / 放弃原因 / 用时），供日志输出。</summary>
+        public string Detail = "";
+
+        /// <summary>耗时（毫秒）。</summary>
+        public long ElapsedMs;
+    }
+
     public static class CoverageGateProver
     {
         /// <summary>枚举组合数上限：prod(MaxStacks+1) 超过该值立即放弃（未证明）。</summary>
@@ -51,34 +82,39 @@ namespace ZaohuaAutoCraft.Solver
         public const long MinRemainMs = 150L;
 
         /// <summary>
-        /// 尝试证明覆盖门槛整体不可行：不存在任何符文等级向量（及其材料摆法）同时满足它。
+        /// 三态求解覆盖门槛：Feasible = 拿到满足门槛的真实摆法；Infeasible = 已证不存在；
+        /// Unknown = 未证明（绝不能当不可行剪枝）。
         /// </summary>
         /// <param name="materials">炼器材料（含库存、形状、属性）。</param>
         /// <param name="runes">已选符文（用 MaxStacks 枚举等级上限）。</param>
         /// <param name="bonus">锻造锤/天赋的固定属性加成。</param>
         /// <param name="yang">阳盘。</param>
         /// <param name="yin">阴盘。</param>
-        /// <param name="priorityGroup">与 runes 对齐的优先级组号（证明可行性时不影响结论，保留签名与主流程一致）。</param>
+        /// <param name="priorityGroup">与 runes 对齐的优先级组号（不影响可行性结论，保留签名与主流程一致）。</param>
         /// <param name="desiredAttr">指定成品属性维度，-1 表示不指定。
-        /// 证明器故意不建模该约束（它是额外限制，去掉只会让证明更难、但结论仍然可靠）。</param>
-        /// <param name="policy">材料策略（证明引擎用 min 件数目标，方向不影响不可行结论，保留签名与主流程一致）。</param>
+        /// 求解器故意不建模该约束（它是额外限制，去掉只会让可行解更多、但结论仍然可靠）；调用方复核时会检查它。</param>
+        /// <param name="policy">材料策略（求解引擎用 min 件数目标，方向不影响可行性结论，保留签名与主流程一致）。</param>
         /// <param name="cov">覆盖门槛：第 l 层（1-based）至少 cov[l-1] 个符文等级 ≥ l。</param>
-        /// <param name="budgetMs">整个证明器共享的时间预算（毫秒）。</param>
-        /// <param name="detail">诊断文本（证明结果 / 枚举数 / 放弃原因），供日志输出。</param>
-        /// <returns>true=已证不可行；false=未证明（绝不能当不可行使用）。</returns>
-        public static bool TryProveInfeasible(
+        /// <param name="budgetMs">整个求解器共享的时间预算（毫秒）。</param>
+        public static GateResult TryProve(
             List<Material> materials, List<Rune> runes, int[] bonus, Grid yang, Grid yin,
             int[] priorityGroup, int desiredAttr, MaterialPolicy policy,
-            int[] cov, long budgetMs, out string detail)
+            int[] cov, long budgetMs)
         {
-            detail = "";
+            var res = new GateResult();
             var sw = Stopwatch.StartNew();
+            // Unknown 的统一出口：只填诊断与耗时，绝不当作不可行。
+            GateResult Unproven(string detail)
+            {
+                res.Detail = detail;
+                res.ElapsedMs = sw.ElapsedMilliseconds;
+                return res;
+            }
             try
             {
                 if (materials == null || runes == null || runes.Count == 0 || cov == null || cov.Length == 0)
                 {
-                    detail = "输入为空（未证明）";
-                    return false;
+                    return Unproven("输入为空（未证明）");
                 }
                 if (bonus == null || bonus.Length != Attr.Count)
                 {
@@ -86,8 +122,7 @@ namespace ZaohuaAutoCraft.Solver
                 }
                 if (budgetMs < MinRemainMs)
                 {
-                    detail = $"预算不足({budgetMs}ms)（未证明）";
-                    return false;
+                    return Unproven($"预算不足({budgetMs}ms)（未证明）");
                 }
                 long endMs = sw.ElapsedMilliseconds + budgetMs;
 
@@ -96,15 +131,16 @@ namespace ZaohuaAutoCraft.Solver
                 List<int[]> vectors = EnumerateMinimalVectors(runes, cov, out overflow);
                 if (overflow)
                 {
-                    detail = $"组合数超上限{MaxEnumCombos}（未证明）";
-                    return false;
+                    return Unproven($"组合数超上限{MaxEnumCombos}（未证明）");
                 }
                 if (vectors.Count == 0)
                 {
                     // 覆盖门槛本身就不可能有任何等级向量满足（如某层要求人数超过能到该层的符文数）。
                     // 「覆盖门槛可行 ⇒ 存在最小向量可行」的逆否即：无最小向量 ⇒ 门槛不可行，这是精确结论。
-                    detail = "无任何等级向量可满足该覆盖门槛";
-                    return true;
+                    res.Outcome = GateOutcome.Infeasible;
+                    res.Detail = "无任何等级向量可满足该覆盖门槛";
+                    res.ElapsedMs = sw.ElapsedMilliseconds;
+                    return res;
                 }
 
                 // ── 步骤 2：逐个最小向量做「数量模型 → 装填检查 → 形状切割 → 重解」循环 ──
@@ -115,8 +151,7 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     if (RemainingMs(endMs, sw) < MinRemainMs)
                     {
-                        detail = $"预算用尽（已枚举{vectors.Count}个，未证明）";
-                        return false;
+                        return Unproven($"预算用尽（已枚举{vectors.Count}个，未证明）");
                     }
                     // 固定等级向量 → 按符文需求折算成每维属性硬下限（等级 0 的符文不产生约束）
                     var levelRunes = ScaleRunes(runes, vec);
@@ -127,8 +162,7 @@ namespace ZaohuaAutoCraft.Solver
                         long remain = RemainingMs(endMs, sw);
                         if (remain < MinRemainMs)
                         {
-                            detail = $"预算用尽（等级向量[{string.Join(",", vec)}]未证明）";
-                            return false;
+                            return Unproven($"预算用尽（等级向量[{string.Join(",", vec)}]未证明）");
                         }
                         // (a) 数量模型：固定等级向量（已折算为属性下限），带上已排除的形状切割
                         long sliceMs = Math.Min(SolveSliceMs, remain);
@@ -146,11 +180,11 @@ namespace ZaohuaAutoCraft.Solver
                         // Unknown / 超时 / 无解信息不全：未证明，立即放弃
                         if (items == null || items.Count == 0)
                         {
-                            detail = $"数量模型{(string.IsNullOrEmpty(status) ? "Unknown" : status)}（等级向量[{string.Join(",", vec)}]，未证明）";
-                            return false;
+                            return Unproven($"数量模型{(string.IsNullOrEmpty(status) ? "Unknown" : status)}（等级向量[{string.Join(",", vec)}]，未证明）");
                         }
-                        // (c) 几何检查：阴阳两面分别真实装填
+                        // (c) 几何检查：阴阳两面分别真实装填；两面都成功则收集成可行摆法
                         CpSatQuantity.ShapeCut failCut = null;
+                        var witness = new List<(Material mat, Side side, int x, int y, int rot)>();
                         foreach (Side side in new[] { Side.Yang, Side.Yin })
                         {
                             var grid = side == Side.Yang ? yang : yin;
@@ -161,14 +195,12 @@ namespace ZaohuaAutoCraft.Solver
                             }
                             if (grid == null || grid.Area <= 0)
                             {
-                                detail = "盘面缺失或为空（未证明）";
-                                return false;
+                                return Unproven("盘面缺失或为空（未证明）");
                             }
                             long packRemain = RemainingMs(endMs, sw);
                             if (packRemain < MinRemainMs)
                             {
-                                detail = "预算用尽（装填前，未证明）";
-                                return false;
+                                return Unproven("预算用尽（装填前，未证明）");
                             }
                             long packSlice = Math.Min(PackSliceMs, packRemain);
                             var packed = Packer.Pack(grid, pieces.Select(p => p.Shape).ToList(), sw,
@@ -176,13 +208,18 @@ namespace ZaohuaAutoCraft.Solver
                             packCalls++;
                             if (packed.Ok)
                             {
+                                // 装填成功：按输入顺序把每块的摆法回填给对应材料（Packer.Spots 与输入对齐）
+                                for (int i = 0; i < pieces.Count; i++)
+                                {
+                                    var spot = packed.Spots[i];
+                                    witness.Add((pieces[i], side, spot.x, spot.y, spot.rotate));
+                                }
                                 continue;
                             }
                             if (packed.TimedOut)
                             {
                                 // 装填超时 != 装不下，未证明
-                                detail = $"装填超时（等级向量[{string.Join(",", vec)}]，未证明）";
-                                return false;
+                                return Unproven($"装填超时（等级向量[{string.Join(",", vec)}]，未证明）");
                             }
                             // 该面已穷尽证明装不下：缩小成极小不可装多重集后生成切割。
                             // 极小核心的所有超集都装不下（能装则去掉多余件即得核心摆法），切割更强且仍然有效。
@@ -198,29 +235,36 @@ namespace ZaohuaAutoCraft.Solver
                         }
                         if (failCut == null)
                         {
-                            // 两面都装得下 ⇒ 找到一个满足覆盖门槛的真实方案 ⇒ 门槛可行，不能剪枝
-                            detail = $"等级向量[{string.Join(",", vec)}]可装填（门槛可行）";
-                            return false;
+                            // 两面都装得下 ⇒ 找到一个满足覆盖门槛的真实方案 ⇒ Feasible，带回摆法供调用方复核
+                            res.Outcome = GateOutcome.Feasible;
+                            res.Items = witness;
+                            res.Level = (int[])vec.Clone();
+                            res.Detail = $"等级向量[{string.Join(",", vec)}]装填成功（门槛可行，件{witness.Count}）";
+                            res.ElapsedMs = sw.ElapsedMilliseconds;
+                            return res;
                         }
                         cuts.Add(failCut);
                         cutTotal++;
                     }
-                    // (d) 8 轮用尽仍非 Infeasible：未证明
+                    // (d) 8 轮用尽仍非 Infeasible：未证明（按三态约定整体返回 Unknown，绝不当作不可行剪枝）
                     if (!proven)
                     {
-                        detail = $"等级向量[{string.Join(",", vec)}] {MaxCutRounds}轮未证不可行（未证明）";
-                        return false;
+                        return Unproven($"等级向量[{string.Join(",", vec)}] {MaxCutRounds}轮未证不可行（未证明）");
                     }
                 }
 
-                detail = $"最小向量{vectors.Count}个全部Infeasible（重解{solveCalls}次/装填{packCalls}次/切割{cutTotal}次） 用时{sw.ElapsedMilliseconds}ms";
-                return true;
+                res.Outcome = GateOutcome.Infeasible;
+                res.Detail = $"最小向量{vectors.Count}个全部Infeasible（重解{solveCalls}次/装填{packCalls}次/切割{cutTotal}次） 用时{sw.ElapsedMilliseconds}ms";
+                res.ElapsedMs = sw.ElapsedMilliseconds;
+                return res;
             }
             catch (Exception ex)
             {
-                // 证明器任何异常都按「未证明」处理，保证不影响主流程正确性
-                detail = "异常（未证明）：" + ex.Message;
-                return false;
+                // 求解器任何异常都按「未证明」处理，保证不影响主流程正确性
+                res.Outcome = GateOutcome.Unknown;
+                res.Detail = "异常（未证明）：" + ex.Message;
+                res.ElapsedMs = sw.ElapsedMilliseconds;
+                return res;
             }
         }
 

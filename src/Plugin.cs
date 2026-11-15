@@ -36,6 +36,8 @@ namespace ZaohuaAutoCraft
 
         internal static ConfigEntry<bool> EquipmentDeterministic;
 
+        internal static ConfigEntry<bool> EquipmentDecomposedGate;
+
         private void Awake()
         {
             Log = Logger;
@@ -55,6 +57,8 @@ namespace ZaohuaAutoCraft
             Solver.CpSatQuantity.Workers = EquipmentWorkers.Value <= 0 ? System.Math.Min(16, System.Math.Max(1, System.Environment.ProcessorCount)) : EquipmentWorkers.Value;
             EquipmentDeterministic = Config.Bind("炼器", "EquipmentDeterministic", false, "严格复现模式（仅调试）：锁单线程+固定种子；默认关闭");
             Solver.CpSatQuantity.Deterministic = EquipmentDeterministic.Value;
+            EquipmentDecomposedGate = Config.Bind("炼器", "EquipmentDecomposedGate", true, "覆盖前沿先用分解法（数量模型+阴阳两面装填）尝试直接给出可行摆法/证明门槛不可行；关闭则完全回退到只证不可行+联合模型多种子的旧行为");
+            Solver.EquipmentSolver.DecomposedGate = EquipmentDecomposedGate.Value;
             new Harmony("zaohua.autocraft").PatchAll();
             // BepInEx 自带的管理物体在这个游戏里会被销毁，导致插件的 Update/OnGUI 不跑，所以自己建一个常驻物体
             var go = new GameObject("ZaohuaAutoCraft");
