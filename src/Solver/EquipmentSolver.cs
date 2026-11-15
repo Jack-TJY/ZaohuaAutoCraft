@@ -1625,12 +1625,14 @@ namespace ZaohuaAutoCraft.Solver
                 // 阶段2：质量锁定后真正优化材料（报告 §5.2/§5.4：用 materialGoal 显式进入材料分支）
                 if (cand != null && cand.Items.Count > 0)
                 {
+                    // 材料阶段预算上限 12000ms：实测给满剩余预算反而更差（60 秒配置下吃 49 秒只拿到批次10，
+                    // 而 30 秒配置下 5 秒就有批次11）。多给时间只会拖长且结果不可靠。
                     long remain2 = deadline - clock.ElapsedMilliseconds;
                     if (remain2 > 300)
                     {
                         // 质量锁定用候选自身等级（而非覆盖目标的下界），保证材料阶段不降低质量
                         int[] qualityLevel = cand.Level;
-                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, remain2 / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, qualityLevel, cand, coverage, 0, false, true);
+                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Min(remain2, 12000L) / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, qualityLevel, cand, coverage, 0, false, true);
                         roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}] 批次{MaterialBatches(q2)} 覆盖键{CoverageKey(q2.Level)}");
                         // 报告 §5.3：不无条件覆盖，只有完整目标（质量优先，其次材料）严格改善才替换
                         if (q2.Items.Count > 0 && CandidateBetter(q2, cand))
