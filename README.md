@@ -2,7 +2,7 @@
 
 《造化仙缘》的 BepInEx 插件。炼丹时选好丹方、炼器时选好符文，插件会算出材料怎么摆进阴阳两边的格子并替你摆上；**炼制/锻造按钮仍由你自己点**。
 
-- 版本：**0.5.0**
+- 版本：**0.5.1**
 - 依赖：BepInEx 5（x64）
 - 求解器：CP-SAT（OR-Tools），并配合自研的分解法快速判定
 
@@ -49,7 +49,7 @@
 ## 安装
 
 1. 游戏已装好 BepInEx 5（x64）。
-2. 把发布包里的 **8 个 DLL 全部**放进 `游戏目录\BepInEx\plugins\`（不能只放 `ZaohuaAutoCraft.dll`）：
+2. 解压发布包 `ZaohuaAutoCraft-0.5.1.zip`，把里面的 **8 个 DLL 全部**放进 `游戏目录\BepInEx\plugins\`（不能只放 `ZaohuaAutoCraft.dll`）：
 
    | 文件 | 大小 | 说明 |
    | --- | --- | --- |
@@ -251,6 +251,15 @@ dotnet run --project tests -c Release -- unpacked/data
 ---
 
 ## 更新记录
+
+### 0.5.1（2026-11-16）
+
+**发布包补全 + 清理死代码。**
+
+- 修复**发布包不完整**：原发布只含 `ZaohuaAutoCraft.dll`，缺少 OR-Tools 的 7 个依赖（含 21.2 MB 的 `google-ortools-native.dll`）。缺少时插件会在加载阶段报 `FileNotFoundException` / `DllNotFoundException`。现在 csproj 增加了 `CopyOrToolsNative` MSBuild 目标，构建时自动复制原生库，发布包为 8 个文件的 zip（约 10.3 MB 压缩 / 23.8 MB 解压）。
+- 清理炼器窗口死代码：删除从未被渲染引用的 `ModeNames`/`ModeValues`（旧模式按钮残留声明）。
+- 修复失效的属性核对分支：原判断 `request.Mode == EquipmentMode.MaxAttr` 因 `Mode` 从未被赋值而永不执行，改为 `request.TargetAttr >= 0`。
+- README 安装章节列出全部 8 个必需文件并说明 OR-Tools 无需另外安装。
 
 ### 0.5.0（2026-11-16）
 

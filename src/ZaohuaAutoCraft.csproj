@@ -3,7 +3,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>ZaohuaAutoCraft</AssemblyName>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0</Version>
+    <Version>0.5.1</Version>
     <!-- 游戏和 BepInEx 的 dll 不随仓库分发，见 README -->
     <GameManaged Condition="'$(GameManaged)' == ''">..\lib</GameManaged>
   </PropertyGroup>
