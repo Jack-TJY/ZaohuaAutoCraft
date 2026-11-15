@@ -11,6 +11,18 @@
     <PackageReference Include="Google.OrTools" Version="9.9.3963" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
+  <!-- OR-Tools 的原生库不在 Google.OrTools 包里，而在 runtime.win-x64 包的 runtimes/win-x64/native 下。
+       net472 不会自动复制 RID native 资源，必须手工复制到输出目录，否则游戏里加载插件时报 DllNotFound。 -->
+  <PropertyGroup>
+    <OrToolsVersion>9.9.3963</OrToolsVersion>
+    <NuGetPackageRoot Condition="'$(NuGetPackageRoot)' == ''">$(UserProfile)\.nuget\packages\</NuGetPackageRoot>
+  </PropertyGroup>
+  <Target Name="CopyOrToolsNative" AfterTargets="Build">
+    <ItemGroup>
+      <OrToolsNativeFile Include="$(NuGetPackageRoot)google.ortools.runtime.win-x64\$(OrToolsVersion)\runtimes\win-x64\native\google-ortools-native.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(OrToolsNativeFile)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="Exists('%(OrToolsNativeFile.FullPath)')" />
+  </Target>
   <ItemGroup>
     <Reference Include="Assembly-CSharp"><HintPath>$(GameManaged)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine"><HintPath>$(GameManaged)\UnityEngine.dll</HintPath><Private>false</Private></Reference>

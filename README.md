@@ -49,9 +49,25 @@
 ## 安装
 
 1. 游戏已装好 BepInEx 5（x64）。
-2. 把 `ZaohuaAutoCraft.dll` 放进 `游戏目录\BepInEx\plugins\`。
+2. 把发布包里的 **8 个 DLL 全部**放进 `游戏目录\BepInEx\plugins\`（不能只放 `ZaohuaAutoCraft.dll`）：
+
+   | 文件 | 大小 | 说明 |
+   | --- | --- | --- |
+   | `ZaohuaAutoCraft.dll` | 0.2 MB | 插件本体 |
+   | `Google.OrTools.dll` | 1.7 MB | CP-SAT 求解器托管包装 |
+   | `Google.Protobuf.dll` | 0.5 MB | OR-Tools 依赖 |
+   | `google-ortools-native.dll` | **21.2 MB** | CP-SAT 原生库（Windows x64）|
+   | `System.Buffers.dll` | 27 KB | OR-Tools 依赖 |
+   | `System.Memory.dll` | 145 KB | OR-Tools 依赖 |
+   | `System.Numerics.Vectors.dll` | 113 KB | OR-Tools 依赖 |
+   | `System.Runtime.CompilerServices.Unsafe.dll` | 23 KB | OR-Tools 依赖 |
+
 3. 启动游戏，炼丹界面右上角会出现「自动摆放」按钮。
 4. **更新插件后必须完全重启游戏**（BepInEx 只在启动时加载插件）。
+
+> **关于 OR-Tools**：插件用 OR-Tools 的 CP-SAT 求解器，但它**不需要你另外安装**（不用装 Python、不用 pip、不用配置环境变量）。上面那 7 个 OR-Tools 相关 DLL 就是它的全部依赖，随发布包一起分发。少放任何一个都会在游戏日志里报 `FileNotFoundException` 或 `DllNotFoundException`，插件功能失效。
+>
+> 发布包约 **23.8 MB**，其中 21.2 MB 是 `google-ortools-native.dll`——这是正常的，OR-Tools 原生库本身就这么大。
 
 ---
 
