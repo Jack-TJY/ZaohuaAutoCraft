@@ -4,3 +4,5 @@ lib/
 unpacked/
 bin/
 obj/
+# 发布产物
+dist/
