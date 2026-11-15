@@ -1537,6 +1537,18 @@ namespace ZaohuaAutoCraft.Solver
                                 frontierUnproven = true;
                                 break;
                             }
+                            // 覆盖门槛先用「数量模型 → 装填检查 → 形状排除约束 → 重解」循环证不可行
+                            // （离线实测鞋子2覆盖门槛[5,3,2]约 0.77s 可证），已证则直接收缩上界，
+                            // 省掉约 14s 的多种子联合求解；未证明则照旧走下面的多种子联合求解。
+                            // 只有数量模型返回 Infeasible 才剪枝，Unknown/超时一律视为未证明。
+                            if (CoverageGateProver.TryProveInfeasible(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin,
+                                req.PriorityGroup, req.TargetAttr, req.MaterialPolicy, cov, Math.Min(2500L, rem / 5), out var proofDetail))
+                            {
+                                roundLog.Add($"联合几何·覆盖门槛[{string.Join(",", cov)}] 已证不可行 {proofDetail}");
+                                hi = mid - 1;
+                                checks++;
+                                continue;
+                            }
                             // 实测：即使等级提示与新增覆盖门槛不一致，材料数量维度的 warm start 仍有价值
                             // （去掉提示后 [5,3,1] 门槛的命中率明显下降），因此始终沿用上一步的候选作为提示。
                             var gateHint = q1;

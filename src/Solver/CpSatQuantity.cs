@@ -148,6 +148,7 @@ namespace ZaohuaAutoCraft.Solver
             var solver = new CpSolver();
             solver.StringParameters = $"max_time_in_seconds:{timeLimitSec.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)},num_search_workers:{(Deterministic ? 1 : Workers)},random_seed:0";
             var status = solver.Solve(model);
+            LastStatus = status.ToString(); // 诊断用：与 SolveUnified 保持一致的最近状态
             if (status != CpSolverStatus.Optimal && status != CpSolverStatus.Feasible)
             {
                 return null;
