@@ -17,6 +17,16 @@ using ZaohuaAutoCraft.Tests;
     }
 }
 
+// 材料阶段分解法固定B二分开关（默认关；EquipmentDecomposedMaterial=1/true 打开，用于材料阶段 A/B 对照实测）
+{
+    var decMatEnv = Environment.GetEnvironmentVariable("EquipmentDecomposedMaterial");
+    if (!string.IsNullOrEmpty(decMatEnv))
+    {
+        EquipmentSolver.DecomposedMaterial = decMatEnv != "0" && !decMatEnv.Equals("false", StringComparison.OrdinalIgnoreCase);
+    }
+    Console.WriteLine($"[开关] 覆盖门槛分解法={EquipmentSolver.DecomposedGate} 材料阶段分解法={EquipmentSolver.DecomposedMaterial}");
+}
+
 // 合成炼器测试（不依赖解包数据）：SYNTH=1 时运行后退出
 if (Environment.GetEnvironmentVariable("SYNTH") == "1")
 {
@@ -971,6 +981,7 @@ if (Environment.GetEnvironmentVariable("FLOWTEST") != null)
     int rounds = int.TryParse(Environment.GetEnvironmentVariable("FLOWROUNDS"), out var rr) ? rr : 3;
     int level9 = 0, total = 0;
     int gateHitTotal = 0, gateInfTotal = 0, gateUnkTotal = 0;
+    int decMatTried = 0, decMatAdopted = 0;
     for (int r = 0; r < rounds; r++)
     {
         foreach (var pol in new[] { MaterialPolicy.MaxRepeatCount, MaterialPolicy.LowGradeFirst })
@@ -988,15 +999,44 @@ if (Environment.GetEnvironmentVariable("FLOWTEST") != null)
             string mat = "-";
             var m2 = System.Text.RegularExpressions.Regex.Match(res.RoundLog ?? "", @"联合几何·材料 (\w+) (\d+)ms 件(\d+) 等级\[([^\]]*)\] 批次(\d+)");
             if (m2.Success) { mat = $"{m2.Groups[1].Value} {m2.Groups[2].Value}ms {m2.Groups[3].Value}件 批次{m2.Groups[5].Value}"; }
+            // 材料阶段分解法（固定B二分）尝试与是否采用；采用时材料阶段实际就是分解法（联合模型未跑）
+            bool matDecAdopted = System.Text.RegularExpressions.Regex.IsMatch(res.RoundLog ?? "", @"分解材料 采用");
+            string matDec = "-";
+            var m3 = System.Text.RegularExpressions.Regex.Match(res.RoundLog ?? "", @"分解材料 (\w+) (\d+)ms 件(\d+) 批次(\d+)");
+            if (m3.Success)
+            {
+                matDec = $"{m3.Groups[1].Value} {m3.Groups[2].Value}ms {m3.Groups[3].Value}件 批次{m3.Groups[4].Value}" + (matDecAdopted ? " 采用" : " 未采用");
+            }
             int gateHit = System.Text.RegularExpressions.Regex.Matches(res.RoundLog ?? "", @"分解法命中 ").Count;
             int gateInf = System.Text.RegularExpressions.Regex.Matches(res.RoundLog ?? "", @"分解法证不可行").Count;
             int gateUnk = System.Text.RegularExpressions.Regex.Matches(res.RoundLog ?? "", @"分解法未决").Count;
             gateHitTotal += gateHit;
             gateInfTotal += gateInf;
             gateUnkTotal += gateUnk;
+            if (m3.Success) { decMatTried++; }
+            if (matDecAdopted) { decMatAdopted++; }
             int pc = res.Solutions.Count > 0 ? res.Solutions[0].PieceCount : 0;
             int bt = res.Solutions.Count > 0 ? res.Solutions[0].Batches : 0;
-            Console.WriteLine($"[轮{r + 1}·{pol}] 总耗时{res.ElapsedMs}ms 覆盖{cov} 材料{mat} 等级[{lvl}] 总计{sum} 件{pc} 批次{bt} 分解(命中{gateHit}/证不可行{gateInf}/未决{gateUnk})");
+            // 材料语义指标：价格总和 / 品阶和（EquipmentSolution 已结算）+ 品阶秩加权和（LowGradeFirst 排序键，便于核对策略语义）
+            long price = res.Solutions.Count > 0 ? res.Solutions[0].Price : 0;
+            int gradeSum = res.Solutions.Count > 0 ? res.Solutions[0].GradeSum : 0;
+            int maxGrade = res.Solutions.Count > 0 ? res.Solutions[0].MaxGrade : 0;
+            long rankSum = 0;
+            if (res.Solutions.Count > 0)
+            {
+                var rankGrades = fm.Where(m => m.Stock > 0 && m.Shape.Count > 0).Select(m => m.Grade).Distinct().OrderBy(gx => gx).ToList();
+                var rankOf = new Dictionary<int, int>();
+                for (int gi = 0; gi < rankGrades.Count; gi++) { rankOf[rankGrades[gi]] = gi; }
+                foreach (var p in res.Solutions[0].Placements) { rankSum += rankOf.TryGetValue(p.Material.Grade, out var gr) ? gr : 0; }
+            }
+            // 材料阶段实际耗时/状态：分解法采用时材料阶段=分解法本次；否则=联合几何材料阶段
+            string matStage = "-";
+            if (matDecAdopted && m3.Success) { matStage = $"dec:Feasible:{m3.Groups[2].Value}ms"; }
+            else if (m2.Success) { matStage = $"joint:{m2.Groups[1].Value}:{m2.Groups[2].Value}ms"; }
+            string matShown = matDecAdopted ? $"分解[{matDec}]" : (m3.Success ? $"分解[{matDec}]/联合[{mat}]" : mat);
+            Console.WriteLine($"[轮{r + 1}·{pol}] 总耗时{res.ElapsedMs}ms 覆盖{cov} 材料{matShown} 等级[{lvl}] 总计{sum} 件{pc} 批次{bt} 价{price} 品阶和{gradeSum} 分解(命中{gateHit}/证不可行{gateInf}/未决{gateUnk})");
+            // 机器可读行：A/B 对照表直接汇总用
+            Console.WriteLine($"FLOWDATA round={r + 1} policy={pol} totalMs={res.ElapsedMs} matDecAdopted={(matDecAdopted ? 1 : 0)} matDec=\"{matDec}\" matJoint=\"{mat}\" matStage=\"{matStage}\" level=\"{lvl}\" levelSum={sum} pieces={pc} batches={bt} price={price} gradeSum={gradeSum} maxGrade={maxGrade} rankSum={rankSum} gateHit={gateHit} gateInf={gateInf} gateUnk={gateUnk}");
             if (Environment.GetEnvironmentVariable("FLOWLOG") != null && !string.IsNullOrEmpty(res.RoundLog))
             {
                 foreach (var seg in res.RoundLog.Split(new[] { " | " }, StringSplitOptions.None))
@@ -1006,7 +1046,50 @@ if (Environment.GetEnvironmentVariable("FLOWTEST") != null)
             }
         }
     }
-    Console.WriteLine($"汇总：总等级>=9 的 {level9}/{total}；分解法命中{gateHitTotal}/证不可行{gateInfTotal}/未决{gateUnkTotal}");
+    Console.WriteLine($"汇总：总等级>=9 的 {level9}/{total}；分解法命中{gateHitTotal}/证不可行{gateInfTotal}/未决{gateUnkTotal}；材料阶段分解法尝试{decMatTried}次/采用{decMatAdopted}次");
+}
+
+// 4.13 材料阶段策略语义对照：分解法 off/on 时两种材料策略选到的材料品阶/价格是否变化
+//      （分解法数量模型只做「min 件数 + 可行性」，不建模 MaxRepeatCount/LowGradeFirst 的偏好，需要量化影响）
+if (Environment.GetEnvironmentVariable("MATCMP") != null)
+{
+    Console.WriteLine("===== 材料阶段策略语义对照（分解法 off/on）=====");
+    CpSatQuantity.Workers = 16;
+    List<Material> mcMats;
+    List<Rune> mcRunes;
+    var mcReal = Environment.GetEnvironmentVariable("REALINV");
+    if (!string.IsNullOrEmpty(mcReal) && System.IO.File.Exists(mcReal))
+    {
+        mcMats = SolverTests.RealInput.LoadMaterials(mcReal);
+        mcRunes = SolverTests.RealInput.LoadRunes(mcReal);
+    }
+    else
+    {
+        var mcInv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+        mcMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, mcInv.TryGetValue(m.Id, out var mcc) ? mcc : 0)).ToList();
+        mcRunes = allRunes.Take(5).ToList();
+    }
+    bool savedDec = EquipmentSolver.DecomposedMaterial;
+    foreach (bool decOn in new[] { false, true })
+    {
+        EquipmentSolver.DecomposedMaterial = decOn;
+        foreach (var pol in new[] { MaterialPolicy.MaxRepeatCount, MaterialPolicy.LowGradeFirst })
+        {
+            var mreq = new EquipmentRequest { Materials = mcMats, Runes = mcRunes, Yang = new Grid(7, 10), Yin = new Grid(7, 10), Unified = true, TargetAttr = -1, MaterialPolicy = pol, TimeLimitMs = 30000, TopK = 1 };
+            var mres = new EquipmentSolver(mreq).Solve();
+            var ms = mres.Solutions.Count > 0 ? mres.Solutions[0] : null;
+            string mverify = ms == null ? "-" : (EquipmentSolver.Verify(mreq, ms) ?? "OK");
+            Console.WriteLine($"[dec={decOn} {pol}] {mres.ElapsedMs}ms 解{mres.Solutions.Count} 件{ms?.PieceCount ?? 0} 批次{ms?.Batches ?? 0} 等级[{(ms == null ? "-" : string.Join(",", ms.Runes.Level))}] 最高品阶{ms?.MaxGrade ?? 0} 品阶和{ms?.GradeSum ?? 0} 价{ms?.Price ?? 0} 复核{mverify}");
+            if (ms != null)
+            {
+                foreach (var g in ms.Placements.GroupBy(p => p.Material).OrderByDescending(g => g.Key.Grade).ThenByDescending(g => g.Key.Price))
+                {
+                    Console.WriteLine($"    {g.Key.Id} 品阶{g.Key.Grade} 价{g.Key.Price} attrs=[{string.Join(",", g.Key.Attrs)}] ×{g.Count()}");
+                }
+            }
+        }
+    }
+    EquipmentSolver.DecomposedMaterial = savedDec;
 }
 
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）

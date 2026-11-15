@@ -38,6 +38,8 @@ namespace ZaohuaAutoCraft
 
         internal static ConfigEntry<bool> EquipmentDecomposedGate;
 
+        internal static ConfigEntry<bool> EquipmentDecomposedMaterial;
+
         private void Awake()
         {
             Log = Logger;
@@ -59,6 +61,8 @@ namespace ZaohuaAutoCraft
             Solver.CpSatQuantity.Deterministic = EquipmentDeterministic.Value;
             EquipmentDecomposedGate = Config.Bind("炼器", "EquipmentDecomposedGate", true, "覆盖前沿先用分解法（数量模型+阴阳两面装填）尝试直接给出可行摆法/证明门槛不可行；关闭则完全回退到只证不可行+联合模型多种子的旧行为");
             Solver.EquipmentSolver.DecomposedGate = EquipmentDecomposedGate.Value;
+            EquipmentDecomposedMaterial = Config.Bind("炼器", "EquipmentDecomposedMaterial", true, "材料阶段分解法开关（默认开启）：开启后先试分解法材料阶段（数量模型+装填+形状切割）。MaxRepeatCount 走固定B二分（批次不降才采用）；LowGradeFirst 单次最小化品阶秩加权和（同分比价格，按最终排序键严格更优才采用）。不采用/超时回退现有联合模型材料优化。A/B 实测用，稳定前不要打开");
+            Solver.EquipmentSolver.DecomposedMaterial = EquipmentDecomposedMaterial.Value;
             new Harmony("zaohua.autocraft").PatchAll();
             // BepInEx 自带的管理物体在这个游戏里会被销毁，导致插件的 Update/OnGUI 不跑，所以自己建一个常驻物体
             var go = new GameObject("ZaohuaAutoCraft");

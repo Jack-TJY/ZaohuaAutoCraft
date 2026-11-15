@@ -105,6 +105,15 @@ namespace ZaohuaAutoCraft.Solver
         /// </summary>
         public static bool DecomposedGate = true;
 
+        /// <summary>
+        /// 材料阶段「分解法」实验开关（默认关闭，A/B 实验用）：MaxRepeatCount 走固定 B 二分，LowGradeFirst 单次秩加权。
+        /// 开启后材料阶段先试 DecomposedMaterialSolver（数量模型 + 阴阳两面装填 + 极小不可装核切割）：
+        ///   · MaxRepeatCount：按固定 B 可行性二分最大化批次，批次不少于当前候选且复核通过/质量不降才采用；
+        ///   · LowGradeFirst：单次求解最小化品阶秩加权和（同分按价格），按最终排序键严格优于当前候选才采用。
+        /// 不采用或超时则原样回退现有 JointGeometrySolver 材料阶段。由 Plugin 按配置初始化。
+        /// </summary>
+        public static bool DecomposedMaterial = true;
+
         public EquipmentSolver(EquipmentRequest req)
         {
             this.req = req;
@@ -1134,7 +1143,8 @@ namespace ZaohuaAutoCraft.Solver
             return new IComparable[] { score, pol, -s.Price, -s.PieceCount };
         }
 
-        long GradeRankSum(EquipmentSolution s)
+        /// <summary>材料品阶秩表（低阶=0；与 JointGeometrySolver/CpSatQuantity 的低阶优先进阶同口径）。</summary>
+        Dictionary<int, int> GradeRanks()
         {
             var grades = req.Materials.Where(m => m.Stock > 0 && m.Shape.Count > 0).Select(m => m.Grade).Distinct().OrderBy(g => g).ToList();
             var rank = new Dictionary<int, int>();
@@ -1142,12 +1152,60 @@ namespace ZaohuaAutoCraft.Solver
             {
                 rank[grades[i]] = i;
             }
+            return rank;
+        }
+
+        long GradeRankSum(EquipmentSolution s)
+        {
+            var rank = GradeRanks();
             long sum = 0;
             foreach (var p in s.Placements)
             {
                 sum += rank.TryGetValue(p.Material.Grade, out var r) ? r : 0;
             }
             return sum;
+        }
+
+        /// <summary>候选摆法的品阶秩加权和（与 UnifiedRankKey 的 LowGradeFirst 排序键同口径）。</summary>
+        long GradeRankSumOfItems(List<(Material mat, Side side, int x, int y, int rot)> items)
+        {
+            var rank = GradeRanks();
+            long sum = 0;
+            for (int i = 0; i < items.Count; i++)
+            {
+                sum += rank.TryGetValue(items[i].mat.Grade, out var r) ? r : 0;
+            }
+            return sum;
+        }
+
+        static long PriceSumOfItems(List<(Material mat, Side side, int x, int y, int rot)> items)
+        {
+            long sum = 0;
+            for (int i = 0; i < items.Count; i++)
+            {
+                sum += items[i].mat.Price;
+            }
+            return sum;
+        }
+
+        /// <summary>
+        /// LowGradeFirst 采用判定：最终排序键的 pol 段是「品阶秩加权和 → 价格 → 件数」
+        /// （见 UnifiedRankKey），只有分解法摆法在该键上严格优于当前候选才采用，
+        /// 否则回退联合模型材料阶段（保证材料语义不劣于基线）。
+        /// </summary>
+        bool LowGradeBetter(EquipmentSolution a, JointGeometrySolver.Candidate b)
+        {
+            long ar = GradeRankSum(a), br = GradeRankSumOfItems(b.Items);
+            if (ar != br)
+            {
+                return ar < br;
+            }
+            long ap = a.Price, bp = PriceSumOfItems(b.Items);
+            if (ap != bp)
+            {
+                return ap < bp;
+            }
+            return a.PieceCount < b.Items.Count;
         }
 
         /// <summary>统一排序键（越大越好）。比较顺序：最少材料/最多炼制次数=符文数量&gt;符文等级&gt;件数/次数；指定符文优先=优先等级&gt;符文数量&gt;其它等级&gt;件数；最高属性=目标属性&gt;符文数量&gt;等级&gt;次数。</summary>
@@ -1495,6 +1553,36 @@ namespace ZaohuaAutoCraft.Solver
             return sol;
         }
 
+        /// <summary>分解法（材料阶段 B 二分 / 低阶优先）给出的摆法 → EquipmentSolution（Finalize 结算符文等级/批次），交给 Verify 复核。</summary>
+        EquipmentSolution SolutionFromItems(List<(Material mat, Side side, int x, int y, int rot)> items)
+        {
+            var sol = new EquipmentSolution();
+            foreach (var it in items)
+            {
+                sol.Placements.Add(new Placement { Material = it.mat, Side = it.side, X = it.x, Y = it.y, Rotate = it.rot });
+            }
+            Finalize(sol);
+            return sol;
+        }
+
+        /// <summary>复核用：实际等级向量是否逐项不低于要求向量（材料阶段不允许降低质量）。</summary>
+        static bool LevelsAtLeast(int[] have, int[] want)
+        {
+            if (want == null)
+            {
+                return true;
+            }
+            for (int i = 0; i < want.Length; i++)
+            {
+                int h = have != null && i < have.Length ? have[i] : 0;
+                if (h < want[i])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         /// <summary>按形状类型联合建模（报告 §6）：几何与数量在同一模型，用于分解路径反复装不下时。</summary>
         List<EquipmentSolution> SolveJointUnified()
         {
@@ -1690,12 +1778,68 @@ namespace ZaohuaAutoCraft.Solver
                     {
                         // 质量锁定用候选自身等级（而非覆盖目标的下界），保证材料阶段不降低质量
                         int[] qualityLevel = cand.Level;
-                        var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Min(remain2, 12000L) / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, qualityLevel, cand, coverage, 0, false, true);
-                        roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}] 批次{MaterialBatches(q2)} 覆盖键{CoverageKey(q2.Level)}");
-                        // 报告 §5.3：不无条件覆盖，只有完整目标（质量优先，其次材料）严格改善才替换
-                        if (q2.Items.Count > 0 && CandidateBetter(q2, cand))
+                        long curBatches = MaterialBatches(cand);
+                        bool materialAdopted = false;
+                        if (DecomposedMaterial)
                         {
-                            cand = q2;
+                            // 实验路径：固定批次 B 的纯线性可行性二分（数量模型 + 阴阳两面装填 + 极小不可装核切割），
+                            // 预算 min(6000, 剩余)：最多 6 秒，留给失败时的联合模型回退。
+                            long decBudget = Math.Min(6000L, remain2);
+                            var dec = DecomposedMaterialSolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin,
+                                req.PriorityGroup, req.TargetAttr, qualityLevel, cand, decBudget, req.MaterialPolicy);
+                            roundLog.Add(dec.Status == "Feasible"
+                                ? $"分解材料 Feasible {dec.ElapsedMs}ms 件{dec.Items.Count} 批次{dec.Batches} {dec.Detail}"
+                                : $"分解材料 {dec.Status} {dec.ElapsedMs}ms {dec.Detail}");
+                            if (dec.Status == "Feasible" && dec.Items.Count > 0)
+                            {
+                                var decSol = SolutionFromItems(dec.Items);
+                                string derr = Verify(req, decSol);
+                                bool qualityOk = decSol.Runes != null && LevelsAtLeast(decSol.Runes.Level, qualityLevel);
+                                bool better;
+                                string betterNote;
+                                if (req.MaterialPolicy == MaterialPolicy.MaxRepeatCount)
+                                {
+                                    // 最多次数：批次不少于当前候选才采用（保持原有采用语义：批次不降）
+                                    better = decSol.Batches >= curBatches;
+                                    betterNote = $"批次{decSol.Batches}≥候选{curBatches}";
+                                }
+                                else
+                                {
+                                    // 低阶优先：按最终排序键的 pol 段（品阶秩加权和 → 价格 → 件数）严格优于候选才采用，
+                                    // 否则回退联合模型（保证材料语义不劣于基线材料阶段）
+                                    better = LowGradeBetter(decSol, cand);
+                                    betterNote = $"秩和{GradeRankSum(decSol)}/价{decSol.Price}/件{decSol.PieceCount}"
+                                        + $" vs 候选秩和{GradeRankSumOfItems(cand.Items)}/价{PriceSumOfItems(cand.Items)}/件{cand.Items.Count}";
+                                }
+                                if (derr == null && qualityOk && better)
+                                {
+                                    var decCand = new JointGeometrySolver.Candidate
+                                    {
+                                        Status = "Feasible",
+                                        ElapsedMs = dec.ElapsedMs,
+                                        Level = decSol.Runes.Level,
+                                    };
+                                    decCand.Items.AddRange(dec.Items);
+                                    cand = decCand;
+                                    materialAdopted = true;
+                                    roundLog.Add($"分解材料 采用 {betterNote} 复核OK 等级[{string.Join(",", decSol.Runes.Level)}]（材料阶段跳过联合模型）");
+                                }
+                                else
+                                {
+                                    roundLog.Add($"分解材料 未采用 {betterNote} 复核{derr ?? "OK"} 质量{(qualityOk ? "OK" : "降低")}，回退联合模型");
+                                }
+                            }
+                        }
+                        if (!materialAdopted)
+                        {
+                            // 原路径完全保持不变：联合几何模型材料阶段（乘法批次模型）作为回退/对照
+                            var q2 = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Min(remain2, 12000L) / 1000.0, req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, qualityLevel, cand, coverage, 0, false, true);
+                            roundLog.Add($"联合几何·材料 {q2.Status} {q2.ElapsedMs}ms 件{q2.Items.Count} 等级[{string.Join(",", q2.Level)}] 批次{MaterialBatches(q2)} 覆盖键{CoverageKey(q2.Level)}");
+                            // 报告 §5.3：不无条件覆盖，只有完整目标（质量优先，其次材料）严格改善才替换
+                            if (q2.Items.Count > 0 && CandidateBetter(q2, cand))
+                            {
+                                cand = q2;
+                            }
                         }
                     }
                 }
