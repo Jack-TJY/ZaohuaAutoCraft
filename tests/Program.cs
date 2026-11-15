@@ -931,6 +931,59 @@ if (Environment.GetEnvironmentVariable("PARALLELTEST") != null)
     }
 }
 
+// 4.12 只跑主流程（跳过 SHOE 块里的长诊断），用于快速测覆盖前沿命中率
+if (Environment.GetEnvironmentVariable("FLOWTEST") != null)
+{
+    Console.WriteLine("===== 主流程快速测试（鞋子2）=====");
+    CpSatQuantity.Workers = 16;
+    string realInv = Environment.GetEnvironmentVariable("REALINV");
+    List<Material> fm;
+    List<Rune> fr;
+    if (!string.IsNullOrEmpty(realInv) && System.IO.File.Exists(realInv))
+    {
+        fm = SolverTests.RealInput.LoadMaterials(realInv);
+        fr = SolverTests.RealInput.LoadRunes(realInv);
+        Console.WriteLine($"真实存档输入：材料 {fm.Count} 种 / 符文 {fr.Count} 个");
+    }
+    else
+    {
+        var flInv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+        fm = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, flInv.TryGetValue(m.Id, out var flc) ? flc : 0)).ToList();
+        fr = new List<Rune>
+        {
+            new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
+            new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
+            new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
+            new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
+            new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
+        };
+        Console.WriteLine($"旧库存：材料 {fm.Count} 种");
+    }
+    int rounds = int.TryParse(Environment.GetEnvironmentVariable("FLOWROUNDS"), out var rr) ? rr : 3;
+    int level9 = 0, total = 0;
+    for (int r = 0; r < rounds; r++)
+    {
+        foreach (var pol in new[] { MaterialPolicy.MaxRepeatCount, MaterialPolicy.LowGradeFirst })
+        {
+            var fre = new EquipmentRequest { Materials = fm, Runes = fr, Yang = new Grid(7, 10), Yin = new Grid(7, 10), Unified = true, TargetAttr = -1, MaterialPolicy = pol, TimeLimitMs = 30000, TopK = 1 };
+            var res = new EquipmentSolver(fre).Solve();
+            total++;
+            string lvl = res.Solutions.Count > 0 ? string.Join(",", res.Solutions[0].Runes.Level) : "-";
+            int sum = 0;
+            if (res.Solutions.Count > 0) { foreach (var v in res.Solutions[0].Runes.Level) { sum += v; } }
+            if (sum >= 9) { level9++; }
+            string cov = "-";
+            var mm = System.Text.RegularExpressions.Regex.Match(res.RoundLog ?? "", @"覆盖前沿 覆盖\[([^\]]*)\] 检查(\d+)次");
+            if (mm.Success) { cov = "[" + mm.Groups[1].Value + "] 检查" + mm.Groups[2].Value + "次"; }
+            string mat = "-";
+            var m2 = System.Text.RegularExpressions.Regex.Match(res.RoundLog ?? "", @"联合几何·材料 (\w+) (\d+)ms 件(\d+) 等级\[([^\]]*)\] 批次(\d+)");
+            if (m2.Success) { mat = $"{m2.Groups[1].Value} {m2.Groups[2].Value}ms {m2.Groups[3].Value}件 批次{m2.Groups[5].Value}"; }
+            Console.WriteLine($"[轮{r + 1}·{pol}] 总耗时{res.ElapsedMs}ms 覆盖{cov} 材料{mat} 等级[{lvl}] 总计{sum}");
+        }
+    }
+    Console.WriteLine($"汇总：总等级>=9 的 {level9}/{total}");
+}
+
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）
 if (Environment.GetEnvironmentVariable("CPSAT") != null)
 {

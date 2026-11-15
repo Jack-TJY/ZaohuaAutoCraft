@@ -1391,7 +1391,7 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         /// <summary>单个覆盖门槛的总预算（多种子共享，每个种子约 3.5 秒）。实测 8 秒（4种子×2秒）命中率不足，14 秒可稳定命中 [5,3,1]。</summary>
-        static long GateBudgetMs = 14000L;
+        static long GateBudgetMs = 20000L;
 
         /// <summary>候选等级向量在第 l 层（层数 ≥ l）的符文数。</summary>
         static int CoverageAt(int[] level, int l)
