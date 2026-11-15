@@ -476,18 +476,31 @@ if (Environment.GetEnvironmentVariable("SHOE") != null)
 {
     Console.WriteLine("===== 鞋子2 配方复现（真实库存）=====");
     CpSatQuantity.Workers = 16;
-    var invPath = Path.Combine(dir, "inventory.json");
-    var inv = JsonDocument.Parse(File.ReadAllText(invPath)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
-    var invMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, inv.TryGetValue(m.Id, out var c) ? c : 0)).ToList();
-    Console.WriteLine($"  有效材料 {invMats.Count(m => m.Stock > 0)}/{invMats.Count} 种");
-    var shoeRunes = new List<Rune>
+    // REALINV=<input.json>：改用审查方从游戏存档提取的真实材料/符文；未设置时保持旧行为（inventory.json + 硬编码符文）
+    var realInv = Environment.GetEnvironmentVariable("REALINV");
+    List<Material> invMats;
+    List<Rune> shoeRunes;
+    if (!string.IsNullOrEmpty(realInv))
     {
-        new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
-        new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
-        new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
-        new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
-        new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
-    };
+        invMats = SolverTests.RealInput.LoadMaterials(realInv);
+        shoeRunes = SolverTests.RealInput.LoadRunes(realInv);
+        Console.WriteLine($"  真实存档输入 {realInv}（材料 {invMats.Count} 种 / 符文 {shoeRunes.Count} 个）");
+    }
+    else
+    {
+        var invPath = Path.Combine(dir, "inventory.json");
+        var inv = JsonDocument.Parse(File.ReadAllText(invPath)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+        invMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, inv.TryGetValue(m.Id, out var c) ? c : 0)).ToList();
+        shoeRunes = new List<Rune>
+        {
+            new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
+            new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
+            new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
+            new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
+            new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
+        };
+    }
+    Console.WriteLine($"  有效材料 {invMats.Count(m => m.Stock > 0)}/{invMats.Count} 种");
     foreach (var pol in new[] { MaterialPolicy.MaxRepeatCount, MaterialPolicy.LowGradeFirst })
     {
         var req = new EquipmentRequest { Materials = invMats, Runes = shoeRunes, Yang = new Grid(7, 10), Yin = new Grid(7, 10), Unified = true, TargetAttr = -1, MaterialPolicy = pol, TimeLimitMs = 30000, TopK = 1 };
@@ -766,8 +779,19 @@ if (Environment.GetEnvironmentVariable("SHOE3") != null)
 {
     Console.WriteLine("===== 鞋子3（8 符文）复现 =====");
     CpSatQuantity.Workers = 16;
-    var s3Inv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
-    var s3Mats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, s3Inv.TryGetValue(m.Id, out var s3c) ? s3c : 0)).ToList();
+    // REALINV：材料换成真实存档；8 符文仍用鞋子3 硬编码（input.json 是鞋子2 的 5 符文）
+    var s3Real = Environment.GetEnvironmentVariable("REALINV");
+    List<Material> s3Mats;
+    if (!string.IsNullOrEmpty(s3Real))
+    {
+        s3Mats = SolverTests.RealInput.LoadMaterials(s3Real);
+        Console.WriteLine($"  真实存档输入 {s3Real}（材料 {s3Mats.Count} 种 / 符文用鞋子3 硬编码 8 个）");
+    }
+    else
+    {
+        var s3Inv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+        s3Mats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, s3Inv.TryGetValue(m.Id, out var s3c) ? s3c : 0)).ToList();
+    }
     Rune R3(int ms, int[] req) { return new Rune { Id = "t" + ms + Guid.NewGuid().ToString("N").Substring(0, 4), Name = "R", Requirement = req, MaxStacks = ms }; }
     var s3Runes = new List<Rune>
     {
@@ -799,16 +823,30 @@ if (Environment.GetEnvironmentVariable("PARALLELTEST") != null)
     string mode = Environment.GetEnvironmentVariable("PARALLELTEST"); // "A" 串行 / "B" 并行
     Console.WriteLine($"===== 并行策略对照 mode={mode} =====");
     CpSatQuantity.Workers = 16;
-    var plInv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
-    var plMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, plInv.TryGetValue(m.Id, out var plc) ? plc : 0)).ToList();
-    var plRunes = new List<Rune>
+    // REALINV：改用真实存档材料/符文；未设置时保持旧行为（inventory.json + 硬编码 5 符文）
+    var plReal = Environment.GetEnvironmentVariable("REALINV");
+    List<Material> plMats;
+    List<Rune> plRunes;
+    if (!string.IsNullOrEmpty(plReal))
     {
-        new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
-        new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
-        new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
-        new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
-        new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
-    };
+        plMats = SolverTests.RealInput.LoadMaterials(plReal);
+        plRunes = SolverTests.RealInput.LoadRunes(plReal);
+        Console.WriteLine($"  真实存档输入 {plReal}（材料 {plMats.Count} 种 / 符文 {plRunes.Count} 个：{string.Join(",", plRunes.Select(r => r.Id))}）");
+    }
+    else
+    {
+        var plInv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+        plMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, plInv.TryGetValue(m.Id, out var plc) ? plc : 0)).ToList();
+        plRunes = new List<Rune>
+        {
+            new Rune { Id = "s1", Name = "R1", Requirement = new[] { 0, 0, 0, 0, 0, 100, 100, 100 }, MaxStacks = 1 },
+            new Rune { Id = "s2", Name = "R2", Requirement = new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }, MaxStacks = 1 },
+            new Rune { Id = "s3", Name = "R3", Requirement = new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }, MaxStacks = 3 },
+            new Rune { Id = "s4", Name = "R4", Requirement = new[] { 0, 0, 2000, 0, 0, 0, 0, 1000 }, MaxStacks = 3 },
+            new Rune { Id = "s5", Name = "R5", Requirement = new[] { 0, 2000, 0, 0, 0, 1000, 0, 0 }, MaxStacks = 3 },
+        };
+        Console.WriteLine($"  旧库存输入 {Path.Combine(dir, "inventory.json")}（材料 {plMats.Count} 种 / 符文 {plRunes.Count} 个）");
+    }
     var plY = new Grid(7, 10);
     var plN = new Grid(7, 10);
     int[] plBonus = new int[Attr.Count];
