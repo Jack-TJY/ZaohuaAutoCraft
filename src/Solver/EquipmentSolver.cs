@@ -1494,7 +1494,7 @@ namespace ZaohuaAutoCraft.Solver
                 {
                     fullTarget[i] = req.Runes[i].MaxStacks;
                 }
-                var qFull = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Min(1.5, remain / 1000.0 * 0.15), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, fullTarget);
+                var qFull = JointGeometrySolver.Solve(req.Materials, req.Runes, req.Bonus, req.Yang, req.Yin, Math.Min(2.0, remain / 1000.0 * 0.2), req.TargetAttr, Math.Max(1, CpSatQuantity.Workers), req.PriorityGroup, req.MaterialPolicy, fullTarget);
                 roundLog.Add($"联合几何·满级检查 {qFull.Status} {qFull.ElapsedMs}ms 件{qFull.Items.Count}");
                 JointGeometrySolver.Candidate cand;
                 int[] targetLevel;

@@ -293,11 +293,13 @@ namespace ZaohuaAutoCraft.Solver
         }
 
         /// <summary>
-        /// 枚举覆盖门槛的最小等级向量（每符文 0..MaxStacks 暴力遍历，组合数上限 <see cref="MaxEnumCombos"/>）。
-        /// 最小 = 满足每层「等级≥l 的符文数 ≥ cov[l-1]」，且任一分量再降 1 就会破坏某层需求。
-        /// 例：MaxStacks=[1,1,3,3,3]、cov=[5,3,2] → (1,1,2,3,3)、(1,1,3,2,3)、(1,1,3,3,2)。
+        /// 枚举覆盖门槛的最小等级向量。
+        /// 最小向量与「嵌套集合」一一对应：S_1 ⊇ S_2 ⊇ … ⊇ S_L，其中 S_l = {符文 : 等级 ≥ l}，
+        /// |S_l| 必须正好等于 cov[l-1]。从最高层往下逐层挑人即可**直接构造**，无需遍历全部组合。
+        /// 实测：鞋子3（上限[1,4,3,3,3,3,1,3]、cov[8,6,5,1]）全部组合 20480，但最小向量只有 5 个；
+        /// 鞋子2（[1,1,3,3,3]、cov[5,3,2]）全部组合 256，最小向量 3 个。
         /// </summary>
-        /// <param name="overflow">组合数超上限时为 true（此时返回空列表且不可当「无向量」用）。</param>
+        /// <param name="overflow">最小向量个数超上限时为 true（此时返回空列表且不可当「无向量」用）。</param>
         public static List<int[]> EnumerateMinimalVectors(List<Rune> runes, int[] cov, out bool overflow)
         {
             overflow = false;
@@ -307,18 +309,6 @@ namespace ZaohuaAutoCraft.Solver
                 return result;
             }
             int n = runes.Count;
-            // 组合数上限：超过 4096 立即放弃（未证明）
-            long combos = 1;
-            for (int i = 0; i < n; i++)
-            {
-                combos *= (long)Math.Max(0, runes[i].MaxStacks) + 1L;
-                if (combos > MaxEnumCombos)
-                {
-                    overflow = true;
-                    return result;
-                }
-            }
-            // need[l-1] = 第 l 层需要的人数；层数取 cov 长度与最高 MaxStacks 的较大者（更高层没人能到则 need=0）
             int maxL = cov.Length;
             for (int i = 0; i < n; i++)
             {
@@ -329,7 +319,7 @@ namespace ZaohuaAutoCraft.Solver
             {
                 need[l - 1] = l <= cov.Length ? Math.Max(0, cov[l - 1]) : 0;
             }
-            // 每层最多有多少符文能达到（用于剪枝）
+            // 每层能达到的符文数；要求超过可达数则无向量（该门槛必不可能）
             var cap = new int[maxL];
             for (int l = 1; l <= maxL; l++)
             {
@@ -347,58 +337,90 @@ namespace ZaohuaAutoCraft.Solver
             {
                 if (need[l - 1] > cap[l - 1])
                 {
-                    return result; // 该层人数要求超过能达到该层的符文数：无向量
+                    return result;
                 }
             }
+            var sets = new List<int>[maxL]; // sets[l-1] = S_l
             var vec = new int[n];
-            var reach = new int[maxL]; // reach[l-1] = 已分配中等级 >= l 的符文数
-            void Rec(int idx)
+            void Emit()
             {
-                // 可达性剪枝：已分配 + 剩余符文（即使全部拉满）也凑不够某层需求
+                Array.Clear(vec, 0, n);
                 for (int l = 1; l <= maxL; l++)
                 {
-                    if (need[l - 1] <= 0)
+                    foreach (int i in sets[l - 1])
+                    {
+                        if (vec[i] < l)
+                        {
+                            vec[i] = l;
+                        }
+                    }
+                }
+                result.Add((int[])vec.Clone());
+            }
+            // 处理第 l 层（从 maxL 往 1）；返回 false = 已达上限需中止
+            bool Build(int l)
+            {
+                if (l == 0)
+                {
+                    Emit();
+                    return result.Count <= MaxEnumCombos;
+                }
+                // 上层 S_{l+1} 必须整体包含在本层里
+                var upper = l < maxL ? sets[l] : new List<int>();
+                int add = need[l - 1] - upper.Count;
+                if (add < 0)
+                {
+                    return true; // 上层人数已超本层要求（need 非增时不会发生）
+                }
+                var pool = new List<int>();
+                for (int i = 0; i < n; i++)
+                {
+                    if (Math.Max(0, runes[i].MaxStacks) < l || upper.Contains(i))
                     {
                         continue;
                     }
-                    int can = 0;
-                    for (int j = idx; j < n; j++)
+                    pool.Add(i);
+                }
+                if (add > pool.Count)
+                {
+                    return true; // 够不到本层要求的人数
+                }
+                if (add == 0)
+                {
+                    sets[l - 1] = new List<int>(upper);
+                    return Build(l - 1);
+                }
+                var pick = new int[add];
+                bool Choose(int start, int chosen)
+                {
+                    if (chosen == add)
                     {
-                        if (Math.Max(0, runes[j].MaxStacks) >= l)
+                        var s = new List<int>(upper);
+                        for (int z = 0; z < add; z++)
                         {
-                            can++;
+                            s.Add(pool[pick[z]]);
+                        }
+                        sets[l - 1] = s;
+                        return Build(l - 1);
+                    }
+                    for (int z = start; z < pool.Count; z++)
+                    {
+                        pick[chosen] = z;
+                        if (!Choose(z + 1, chosen + 1))
+                        {
+                            return false;
                         }
                     }
-                    if (reach[l - 1] + can < need[l - 1])
-                    {
-                        return;
-                    }
+                    return true;
                 }
-                if (idx == n)
-                {
-                    if (SatisfiesCoverage(vec, need) && IsMinimal(vec, need))
-                    {
-                        result.Add((int[])vec.Clone());
-                    }
-                    return;
-                }
-                int mx = Math.Max(0, runes[idx].MaxStacks);
-                for (int v = 0; v <= mx; v++)
-                {
-                    vec[idx] = v;
-                    for (int l = 1; l <= v && l <= maxL; l++)
-                    {
-                        reach[l - 1]++;
-                    }
-                    Rec(idx + 1);
-                    for (int l = 1; l <= v && l <= maxL; l++)
-                    {
-                        reach[l - 1]--;
-                    }
-                }
-                vec[idx] = 0;
+                return Choose(0, 0);
             }
-            Rec(0);
+            Build(maxL);
+            if (result.Count > MaxEnumCombos)
+            {
+                overflow = true;
+                result.Clear();
+            }
             return result;
         }
 

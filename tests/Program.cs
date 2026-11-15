@@ -742,6 +742,57 @@ if (Environment.GetEnvironmentVariable("BATCHTEST") != null)
     }
 }
 
+// 4.9 覆盖门槛最小向量枚举自检
+if (Environment.GetEnvironmentVariable("COVERENUM") != null)
+{
+    Console.WriteLine("===== 覆盖门槛最小向量枚举自检 =====");
+    Rune Mk(int ms) { return new Rune { Id = "x", Name = "x", Requirement = new int[Attr.Count], MaxStacks = ms }; }
+    var e2 = CoverageGateProver.EnumerateMinimalVectors(new List<Rune> { Mk(1), Mk(1), Mk(3), Mk(3), Mk(3) }, new[] { 5, 3, 2 }, out bool ov2);
+    Console.WriteLine($"鞋子2 [5,3,2] 上限[1,1,3,3,3]: {e2.Count} 个 overflow={ov2}（暴力枚举应为 3）");
+    foreach (var v in e2) { Console.WriteLine($"  ({string.Join(",", v)})"); }
+    var e3 = CoverageGateProver.EnumerateMinimalVectors(new List<Rune> { Mk(1), Mk(4), Mk(3), Mk(3), Mk(3), Mk(3), Mk(1), Mk(3) }, new[] { 8, 6, 5, 1 }, out bool ov3);
+    Console.WriteLine($"鞋子3 [8,6,5,1] 上限[1,4,3,3,3,3,1,3]: {e3.Count} 个 overflow={ov3}（暴力枚举应为 5）");
+    foreach (var v in e3) { Console.WriteLine($"  ({string.Join(",", v)})"); }
+    var e4 = CoverageGateProver.EnumerateMinimalVectors(new List<Rune> { Mk(1), Mk(1), Mk(3), Mk(3), Mk(3) }, new[] { 5, 3, 1 }, out bool ov4);
+    Console.WriteLine($"鞋子2 [5,3,1]: {e4.Count} 个 overflow={ov4}（应为 3）");
+    var e5 = CoverageGateProver.EnumerateMinimalVectors(new List<Rune> { Mk(1), Mk(1), Mk(3), Mk(3), Mk(3) }, new[] { 5, 3, 0 }, out bool ov5);
+    Console.WriteLine($"鞋子2 [5,3,0]: {e5.Count} 个 overflow={ov5}（应为 1）");
+    var e6 = CoverageGateProver.EnumerateMinimalVectors(new List<Rune> { Mk(1), Mk(1), Mk(3), Mk(3), Mk(3) }, new[] { 5, 4, 0 }, out bool ov6);
+    Console.WriteLine($"鞋子2 [5,4,0]（不可能，只有3个能到2层）: {e6.Count} 个 overflow={ov6}（应为 0）");
+}
+
+// 4.10 鞋子3（8 符文）复现
+if (Environment.GetEnvironmentVariable("SHOE3") != null)
+{
+    Console.WriteLine("===== 鞋子3（8 符文）复现 =====");
+    CpSatQuantity.Workers = 16;
+    var s3Inv = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "inventory.json"))).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+    var s3Mats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, s3Inv.TryGetValue(m.Id, out var s3c) ? s3c : 0)).ToList();
+    Rune R3(int ms, int[] req) { return new Rune { Id = "t" + ms + Guid.NewGuid().ToString("N").Substring(0, 4), Name = "R", Requirement = req, MaxStacks = ms }; }
+    var s3Runes = new List<Rune>
+    {
+        R3(1, new[] { 0, 0, 0, 0, 0, 100, 100, 100 }),
+        R3(4, new[] { 0, 1000, 3000, 0, 0, 0, 0, 0 }),
+        R3(3, new[] { 2500, 1500, 0, 0, 0, 0, 0, 0 }),
+        R3(3, new[] { 0, 1500, 0, 0, 2500, 0, 0, 0 }),
+        R3(3, new[] { 2500, 0, 0, 0, 1500, 0, 0, 0 }),
+        R3(3, new[] { 1500, 0, 0, 0, 2500, 0, 0, 0 }),
+        R3(1, new[] { 0, 10000, 0, 0, 0, 0, 1000, 0 }),
+        R3(3, new[] { 0, 0, 0, 4000, 8000, 0, 0, 0 }),
+    };
+    foreach (var pol in new[] { MaterialPolicy.LowGradeFirst, MaterialPolicy.MaxRepeatCount })
+    {
+        var req3 = new EquipmentRequest { Materials = s3Mats, Runes = s3Runes, Yang = new Grid(7, 10), Yin = new Grid(7, 10), Unified = true, TargetAttr = -1, MaterialPolicy = pol, TimeLimitMs = 60000, TopK = 1 };
+        var res3 = new EquipmentSolver(req3).Solve();
+        Console.WriteLine($"[鞋子3·{pol}] {res3.Status} {res3.ElapsedMs}ms 解{res3.Solutions.Count}");
+        Console.WriteLine($"   轮次: {res3.RoundLog}");
+        foreach (var s in res3.Solutions)
+        {
+            Console.WriteLine($"   {s.PieceCount}件 等级[{string.Join(",", s.Runes.Level)}] 批次{s.Batches} 复核{EquipmentSolver.Verify(req3, s) ?? "OK"}");
+        }
+    }
+}
+
 // 5. CP-SAT 数量主问题速度测试（测试专用，跑在 net8.0）
 if (Environment.GetEnvironmentVariable("CPSAT") != null)
 {
