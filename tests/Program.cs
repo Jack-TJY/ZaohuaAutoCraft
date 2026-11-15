@@ -475,7 +475,7 @@ if (Want("equip"))
 if (Environment.GetEnvironmentVariable("SHOE") != null)
 {
     Console.WriteLine("===== 鞋子2 配方复现（真实库存）=====");
-    CpSatQuantity.Workers = 8;
+    CpSatQuantity.Workers = 16;
     var invPath = Path.Combine(dir, "inventory.json");
     var inv = JsonDocument.Parse(File.ReadAllText(invPath)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
     var invMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, inv.TryGetValue(m.Id, out var c) ? c : 0)).ToList();
@@ -558,7 +558,7 @@ if (Environment.GetEnvironmentVariable("SHOE") != null)
 if (Environment.GetEnvironmentVariable("SEEDTEST") != null)
 {
     Console.WriteLine("===== 种子重试对照测试 =====");
-    CpSatQuantity.Workers = 8;
+    CpSatQuantity.Workers = 16;
     var stInvPath = Path.Combine(dir, "inventory.json");
     var stInv = JsonDocument.Parse(File.ReadAllText(stInvPath)).RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
     var stMats = mats.Where(m => m.TypeId == 361).Select(m => Copy(m, stInv.TryGetValue(m.Id, out var c) ? c : 0)).ToList();
