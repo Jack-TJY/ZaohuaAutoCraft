@@ -1,8 +1,8 @@
-# 自动炼丹炼器（ZaohuaAutoCraft）
+# 炼器炼丹小助手（ZaohuaAutoCraft）
 
 《造化仙缘》的 BepInEx 插件。炼丹时选好丹方、炼器时选好符文，插件会算出材料怎么摆进阴阳两边的格子并替你摆上；**炼制/锻造按钮仍由你自己点**。
 
-- 版本：**0.5.1**
+- 版本：**0.5.2**
 - 依赖：BepInEx 5（x64）
 - 求解器：CP-SAT（OR-Tools），并配合自研的分解法快速判定
 
@@ -49,7 +49,7 @@
 ## 安装
 
 1. 游戏已装好 BepInEx 5（x64）。
-2. 解压发布包 `ZaohuaAutoCraft-0.5.1.zip`，把里面的 **8 个 DLL 全部**放进 `游戏目录\BepInEx\plugins\`（不能只放 `ZaohuaAutoCraft.dll`）：
+2. 解压发布包 `ZaohuaAutoCraft-0.5.2.zip`，把里面的 **8 个 DLL 全部**放进 `游戏目录\BepInEx\plugins\`（不能只放 `ZaohuaAutoCraft.dll`）：
 
    | 文件 | 大小 | 说明 |
    | --- | --- | --- |
@@ -251,6 +251,13 @@ dotnet run --project tests -c Release -- unpacked/data
 ---
 
 ## 更新记录
+
+### 0.5.2
+
+**项目改名：自动炼丹炼器 → 炼器炼丹小助手。**
+
+- 插件显示名改为「炼器炼丹小助手」（游戏日志、BepInEx 插件列表、窗口按钮提示都会显示新名字）。
+- 保持不变（为兼容旧安装）：程序集名 `ZaohuaAutoCraft.dll`、插件 GUID `zaohua.autocraft`、配置文件名 `zaohua.autocraft.cfg`、窗口标题「自动炼丹」/「自动炼器」。
 
 ### 0.5.1（2026-11-16）
 
