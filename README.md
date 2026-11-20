@@ -1,8 +1,10 @@
-# 炼器炼丹小助手（ZaohuaAutoCraft）
+# 炼器炼丹小助手
 
 《造化仙缘》的 BepInEx 插件。炼丹时选好丹方、炼器时选好符文，插件会算出材料怎么摆进阴阳两边的格子并替你摆上；**炼制/锻造按钮仍由你自己点**。
 
-- 版本：**0.5.2**
+- 版本：**0.5.3**
+- 仓库：<https://github.com/Jack-TJY/ZaohuaCraftHelper>
+- 下载：<https://github.com/Jack-TJY/ZaohuaCraftHelper/releases/latest>
 - 依赖：BepInEx 5（x64）
 - 求解器：CP-SAT（OR-Tools），并配合自研的分解法快速判定
 
@@ -49,7 +51,7 @@
 ## 安装
 
 1. 游戏已装好 BepInEx 5（x64）。
-2. 解压发布包 `ZaohuaAutoCraft-0.5.2.zip`，把里面的 **8 个 DLL 全部**放进 `游戏目录\BepInEx\plugins\`（不能只放 `ZaohuaAutoCraft.dll`）：
+2. 解压发布包 `ZaohuaCraftHelper-0.5.3.zip`，把里面的 **8 个 DLL 全部**放进 `游戏目录\BepInEx\plugins\`（不能只放 `ZaohuaAutoCraft.dll`）：
 
    | 文件 | 大小 | 说明 |
    | --- | --- | --- |
@@ -251,6 +253,15 @@ dotnet run --project tests -c Release -- unpacked/data
 ---
 
 ## 更新记录
+
+### 0.5.3
+
+**GitHub 仓库改名 `ZaohuaAutoCraft` → `ZaohuaCraftHelper`。**
+
+- 仓库地址变为 <https://github.com/Jack-TJY/ZaohuaCraftHelper>（旧地址会自动 301 重定向）。
+- 发布包改名为 `ZaohuaCraftHelper-x.y.z.zip`。
+- **程序集文件名仍是 `ZaohuaAutoCraft.dll`** —— 改名会导致 BepInEx 把新旧两个 DLL 当成两个插件同时加载，所以保持不变。
+- 仓库描述与 topics 已补充。
 
 ### 0.5.2
 
